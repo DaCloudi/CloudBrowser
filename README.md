@@ -48,7 +48,9 @@ You can also start a release by hand from the repository's **Actions** tab → *
 
 ## Features
 
-- Tabs, private tabs (Ctrl+Shift+N) and private mode for all new tabs
+- A home page with search, your most-visited sites and a count of blocked trackers
+- Incognito windows (Ctrl+Shift+N) that forget everything when closed, and multiple windows (Ctrl+N)
+- Can be set as the Windows default browser, so links and .html files open in it
 - Ad, tracker and pop-up blocking, with a count in the toolbar
 - Sites must ask before using your camera, microphone, location or notifications
 - Bookmarks and a bookmarks bar, history, and address-bar suggestions from both
@@ -56,7 +58,7 @@ You can also start a release by hand from the repository's **Actions** tab → *
 - Find on page, right-click menus, zoom, print, full-screen video
 - Reopens your tabs on start; Ctrl+Shift+T brings back closed tabs
 - Settings: search engine, home page, theme (light/dark), clearing data, site permissions
-- Built-in pages: `cloud://settings`, `cloud://history`, `cloud://bookmarks`, `cloud://downloads`
+- Built-in pages: `cloud://newtab`, `cloud://settings`, `cloud://history`, `cloud://bookmarks`, `cloud://downloads`
 
 ## Shortcuts
 
@@ -64,8 +66,9 @@ You can also start a release by hand from the repository's **Actions** tab → *
 |---|---|
 | Ctrl+T / Ctrl+W | New tab / close tab |
 | Ctrl+Shift+T | Reopen closed tab |
-| Ctrl+Shift+N | New private tab |
-| Ctrl+Shift+P | Private mode on/off for new tabs |
+| Ctrl+N | New window |
+| Ctrl+Shift+N | New incognito window |
+| Ctrl+Shift+W | Close window |
 | Ctrl+L or Alt+D | Go to the address bar |
 | Ctrl+F, F3 | Find on page, next match |
 | Ctrl+D | Bookmark / un-bookmark this page |
@@ -92,4 +95,4 @@ to the log.
 - Windows SmartScreen will warn "unrecognised app" the first time, because the installer
   isn't code-signed. Click **More info → Run anyway**. Removing that warning means buying
   a code-signing certificate.
-- Private tabs keep cookies and history in memory only. They're wiped when you close the app.
+- Incognito windows keep cookies and history in memory only. They're wiped when the last incognito window closes.
