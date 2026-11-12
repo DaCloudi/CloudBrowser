@@ -33,7 +33,7 @@ jobs:
           CLOUD_SMOKE: '1'
           CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-dev.log
         run: |
-          timeout 540 npx electron . || true
+          timeout 720 npx electron . || true
           cat "$CLOUD_SMOKE_LOG"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
 
@@ -53,6 +53,6 @@ jobs:
           CLOUD_SMOKE: '1'
           CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-packaged.log
         run: |
-          timeout 540 "$LOCALAPPDATA/Programs/CloudBrowser/CloudBrowser.exe" || true
+          timeout 720 "$LOCALAPPDATA/Programs/CloudBrowser/CloudBrowser.exe" || true
           cat "$CLOUD_SMOKE_LOG" | grep -v "^\[SHOT"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"

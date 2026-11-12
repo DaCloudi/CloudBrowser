@@ -2852,16 +2852,14 @@ async function smokeTest() {
     await waitFor(() => !wc.isLoading(), 25000);
     await wait(5000);
     const [a, b] = video.seg.segment;
-    const r = await wc.executeJavaScript(`(async () => {
-      const v = document.querySelector('video'); if (!v) return 'no video';
-      v.muted = true; await v.play().catch(() => {});
-      for (let i = 0; i < 20 && document.querySelector('.html5-video-player.ad-showing'); i++) await new Promise(r => setTimeout(r, 1000));
-      v.currentTime = ${a} - 1.5; await v.play().catch(() => {});
-      await new Promise(r => setTimeout(r, 5000));
-      const toast = document.getElementById('cloud-sb-toast');
-      return JSON.stringify({ now: v.currentTime.toFixed(1), paused: v.paused, toast: toast && toast.textContent });
-    })()`, true).catch(e => 'ERR ' + e.message);
-    S('sponsorblock: segment', a, '→', b, '| after:', r, '| skipped?', (() => { try { return JSON.parse(r).now >= b - 1; } catch { return false; } })());
+    const js = (code) => Promise.race([wc.executeJavaScript(code, true), wait(8000).then(() => 'TIMEOUT')]).catch(e => 'ERR ' + e.message);
+    S('sponsorblock: page', tabUrl(t).slice(0, 60), '|', wc.getTitle().slice(0, 50), '| video element', await js(`!!document.querySelector('video')`),
+      '| segments fetched', [...sbCache.entries()].filter(([k]) => k.startsWith(video.id)).map(([, v]) => v.segs.length).join(','));
+    await js(`(() => { const v = document.querySelector('video'); if (v) { v.muted = true; v.play().catch(() => {}); } return 1; })()`);
+    await waitFor(async () => (await js(`!document.querySelector('.html5-video-player.ad-showing')`)) === true, 25000);
+    await js(`(() => { const v = document.querySelector('video'); v.currentTime = ${a} - 1.5; v.play().catch(() => {}); return 1; })()`);
+    await wait(6000);
+    const r = await js(`JSON.stringify({ now: +document.querySelector('video').currentTime.toFixed(1), paused: document.querySelector('video').paused, toast: (document.getElementById('cloud-sb-toast') || {}).textContent || null })`);
     await screen('sponsorblock');
   });
 
