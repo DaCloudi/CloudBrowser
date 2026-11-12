@@ -182,3 +182,5 @@ input.switch::after {
 }
 input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(18px); }
+
+body[data-time="night"] .site .ico, body.incognito .site .ico { background: #eef2fa; }

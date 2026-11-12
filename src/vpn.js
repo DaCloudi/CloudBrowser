@@ -241,7 +241,7 @@ class Vpn {
     for (const url of ['https://ipwho.is/', 'https://ipapi.co/json/']) {
       try {
         const j = await get(url);
-        const country = j.country || j.country_name;
+        const country = j.success === false ? null : (j.country_name || (j.country && j.country.length > 3 ? j.country : null));
         if (country && gen === this.generation) { this.set({ location: country }); this.log('VPN location:', country); }
         if (country) break;
       } catch {}

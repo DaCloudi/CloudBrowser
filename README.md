@@ -53,7 +53,9 @@ You can also start a release by hand from the repository's **Actions** tab → *
 - Chrome extensions from the Chrome Web Store (e.g. Bitwarden, BTRoblox, RoPro), with toolbar buttons and popups
 - Incognito windows (Ctrl+Shift+N) that forget everything when closed, and multiple windows (Ctrl+N)
 - Can be set as the Windows default browser, so links and .html files open in it
-- Ad, tracker and pop-up blocking, with a count in the toolbar
+- Ad, tracker, cookie-banner and pop-up blocking (also in incognito), with a per-site on/off switch on the shield
+- Built-in VPN: the Tor network (free, choose a country) or your own WireGuard VPN such as Proton VPN's free plan; covers incognito too, with a kill switch and WebRTC leak protection
+- Reader mode (F9), screenshots (Ctrl+Shift+S), picture-in-picture, pinned tabs, drag to reorder tabs, "switch to tab" suggestions, zoom badge, paste-and-go, clear data on exit
 - Sites must ask before using your camera, microphone, location or notifications
 - Bookmarks and a bookmarks bar, history, and address-bar suggestions from both
 - Downloads with progress, pause/resume and a downloads page
@@ -83,6 +85,8 @@ You can also start a release by hand from the repository's **Actions** tab → *
 | Ctrl+Tab, Ctrl+1…9 | Switch tabs |
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
 | Ctrl+P | Print |
+| F9 | Reader mode |
+| Ctrl+Shift+S | Screenshot (copied + saved to Pictures) |
 | F11 | Full screen |
 | F12 | Developer tools |
 
@@ -91,6 +95,19 @@ You can also start a release by hand from the repository's **Actions** tab → *
 Pushing to the `dev` branch runs `.github/workflows/test.yml`, which starts CloudBrowser on
 a Windows machine, clicks through the main features and prints the results and screenshots
 to the log.
+
+## VPN
+
+Click **VPN** in the toolbar.
+
+- **Tor network** — free, no account. Pick a country or "Fastest available". Slower than a paid VPN, and
+  some sites (like Google) may show captchas.
+- **My VPN (WireGuard)** — import a WireGuard `.conf` file from your VPN provider. With a free Proton VPN
+  account: account.protonvpn.com → Downloads → WireGuard configuration → choose a free server → download.
+
+The VPN covers every window, including incognito. While it's connecting, pages don't load at all, so nothing
+leaks over your normal connection. Tor (torproject.org) and [wireproxy](https://github.com/windtf/wireproxy)
+are downloaded at build time by `scripts/fetch-vendor.mjs` and bundled with the installer.
 
 ## Extensions
 
