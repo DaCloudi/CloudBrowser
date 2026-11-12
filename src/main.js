@@ -1448,19 +1448,22 @@ function siteOf(host) {
   return /^(co|com|org|net|gov|ac|edu)\.[a-z]{2}$/.test(two) ? parts.slice(-3).join('.') : two;
 }
 
-// Google refuses sign-in from browsers built on Electron ("This browser or app may not be
-// secure"), but supports Firefox. So on Google's sign-in pages only, CloudBrowser presents
-// itself as current Firefox (request headers here, page-visible values in preload-page.js).
-function firefoxVersion() {
-  // Firefox ships every 4 weeks; 128 was released on 9 July 2024.
-  return 128 + Math.max(0, Math.floor((Date.now() - Date.UTC(2024, 6, 9)) / (28 * 86400000)));
-}
-function firefoxUserAgent() {
-  const v = firefoxVersion();
-  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${v}.0) Gecko/20100101 Firefox/${v}.0`;
-}
+// Google refuses sign-in from browsers it doesn't recognise ("This browser or app may not be
+// secure"). CloudBrowser runs on Chrome's engine but its hidden "brand" hints say Chromium/
+// Electron, not Google Chrome. On Google's sign-in pages it sends the same brand hints as
+// Google Chrome (headers here, page-visible values in preload-page.js).
 function isGoogleSignIn(url) {
   try { const h = new URL(url).hostname; return h === 'accounts.google.com' || h === 'accounts.youtube.com'; } catch { return false; }
+}
+function chromeBrandHeaders() {
+  const full = process.versions.chrome;
+  const major = full.split('.')[0];
+  return {
+    'sec-ch-ua': `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not_A Brand";v="24"`,
+    'sec-ch-ua-full-version-list': `"Google Chrome";v="${full}", "Chromium";v="${full}", "Not_A Brand";v="24.0.0.0"`,
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+  };
 }
 
 // "Do not sell or share my data" signals, and less revealing referrers. Incognito never tells
@@ -1471,8 +1474,15 @@ function setupPrivacyHeaders() {
       const h = details.requestHeaders;
       if (settings.data.sendGpc) { h['Sec-GPC'] = '1'; h['DNT'] = '1'; }
       if (isGoogleSignIn(details.url)) {
-        for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k) || /^user-agent$/i.test(k)) delete h[k];
-        h['User-Agent'] = firefoxUserAgent();
+        const brand = chromeBrandHeaders();
+        for (const k of Object.keys(h)) {
+          const lk = k.toLowerCase();
+          if (lk === 'sec-ch-ua' || lk === 'sec-ch-ua-full-version-list') { delete h[k]; }
+        }
+        h['sec-ch-ua'] = brand['sec-ch-ua'];
+        if (Object.keys(details.requestHeaders).some(k => /full-version-list/i.test(k)) || details.resourceType === 'mainFrame') {
+          h['sec-ch-ua-full-version-list'] = brand['sec-ch-ua-full-version-list'];
+        }
       }
       const ref = h.Referer || h.referer;
       if (ref) {
@@ -2383,12 +2393,16 @@ async function smokeTest() {
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
 
   await step('google sign-in', async () => {
-    S('firefox UA used for Google sign-in', firefoxUserAgent());
+    S('brand hints used for Google sign-in', JSON.stringify(chromeBrandHeaders()));
     const wc = t.view.webContents;
     load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
     await waitFor(() => !wc.isLoading(), 20000);
     await wait(3000);
-    S('page sees', await wc.executeJavaScript(`JSON.stringify({ ua: navigator.userAgent, uad: typeof navigator.userAgentData, vendor: navigator.vendor })`));
+    S('page sees', await wc.executeJavaScript(`navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then(v => JSON.stringify({ ua: navigator.userAgent, brands: navigator.userAgentData.brands, full: v.fullVersionList, chrome: typeof window.chrome }))`).catch(e => 'ERR ' + e.message));
+    load(wc, 'https://httpbin.org/headers'); await waitFor(() => !wc.isLoading(), 10000);
+    load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(3000);
     await wc.executeJavaScript(`document.querySelector('#identifierId') && document.querySelector('#identifierId').focus()`);
     await wait(500);
     wc.insertText('cloudbrowser.signin.test.4821@gmail.com');

@@ -23,6 +23,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/fetch-vendor.mjs
 
+      - name: Baseline - real Chrome on this machine
+        continue-on-error: true
+        run: node scripts/chrome-signin-baseline.mjs
+
       - name: Run from source
         shell: bash
         env:

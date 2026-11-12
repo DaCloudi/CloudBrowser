@@ -9,25 +9,30 @@ if (location.protocol === 'cloud:') {
   });
 }
 
-// Google refuses sign-in from Electron-based browsers but supports Firefox, so on Google's
-// sign-in pages the page sees Firefox (matching the request headers set in main.js).
+// Google refuses sign-in from browsers it doesn't recognise. On Google's sign-in pages, the page
+// sees the same "brand" hints as Google Chrome (matching the headers set in main.js).
 if (location.hostname === 'accounts.google.com' || location.hostname === 'accounts.youtube.com') {
-  const v = 128 + Math.max(0, Math.floor((Date.now() - Date.UTC(2024, 6, 9)) / (28 * 86400000)));
-  const ua = `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${v}.0) Gecko/20100101 Firefox/${v}.0`;
-  const disguise = (ua) => {
-    const nav = Navigator.prototype;
-    const def = (k, val) => { try { Object.defineProperty(nav, k, { get: () => val, configurable: true }); } catch {} };
-    def('userAgent', ua);
-    def('appVersion', '5.0 (Windows)');
-    def('vendor', '');
-    def('platform', 'Win32');
-    def('oscpu', 'Windows NT 10.0; Win64; x64');
-    def('buildID', '20181001000000');
-    def('userAgentData', undefined);
-    try { delete window.chrome; } catch {}
+  const full = process.versions.chrome;
+  const disguise = (full) => {
+    const major = full.split('.')[0];
+    const brands = [{ brand: 'Google Chrome', version: major }, { brand: 'Chromium', version: major }, { brand: 'Not_A Brand', version: '24' }];
+    const fullVersionList = [{ brand: 'Google Chrome', version: full }, { brand: 'Chromium', version: full }, { brand: 'Not_A Brand', version: '24.0.0.0' }];
+    const real = navigator.userAgentData;
+    if (!real) return;
+    const proto = Object.getPrototypeOf(real);
+    try {
+      Object.defineProperty(proto, 'brands', { get: () => brands.map(b => ({ ...b })), configurable: true });
+      const origHigh = proto.getHighEntropyValues;
+      Object.defineProperty(proto, 'getHighEntropyValues', {
+        value: function (hints) {
+          return origHigh.call(this, hints).then(v => ({ ...v, brands: brands.map(b => ({ ...b })), fullVersionList: fullVersionList.map(b => ({ ...b })), uaFullVersion: full }));
+        }, configurable: true, writable: true,
+      });
+      Object.defineProperty(proto, 'toJSON', { value: function () { return { brands: this.brands, mobile: this.mobile, platform: this.platform }; }, configurable: true, writable: true });
+    } catch {}
   };
   try {
-    if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: disguise, args: [ua] });
-    else require('electron').webFrame.executeJavaScript(`(${disguise.toString()})(${JSON.stringify(ua)})`);
+    if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: disguise, args: [full] });
+    else require('electron').webFrame.executeJavaScript(`(${disguise.toString()})(${JSON.stringify(full)})`);
   } catch (e) { console.error('sign-in compatibility failed', e); }
 }
