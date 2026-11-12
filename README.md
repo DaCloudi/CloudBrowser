@@ -48,7 +48,9 @@ You can also start a release by hand from the repository's **Actions** tab → *
 
 ## Features
 
-- A home page with search, your most-visited sites and a count of blocked trackers
+- A home page with search and shortcuts: your most-visited sites, or your own (add, edit, drag to reorder)
+- Tabs in the title bar, or vertical tabs in a collapsible sidebar
+- Chrome extensions from the Chrome Web Store (e.g. Bitwarden, BTRoblox, RoPro), with toolbar buttons and popups
 - Incognito windows (Ctrl+Shift+N) that forget everything when closed, and multiple windows (Ctrl+N)
 - Can be set as the Windows default browser, so links and .html files open in it
 - Ad, tracker and pop-up blocking, with a count in the toolbar
@@ -89,6 +91,18 @@ You can also start a release by hand from the repository's **Actions** tab → *
 Pushing to the `dev` branch runs `.github/workflows/test.yml`, which starts CloudBrowser on
 a Windows machine, clicks through the main features and prints the results and screenshots
 to the log.
+
+## Extensions
+
+Open the ⋮ menu → **Extensions** (`cloud://extensions`), or visit any extension on the
+[Chrome Web Store](https://chromewebstore.google.com/) and click **Add to CloudBrowser** in the bar
+that appears. Most extensions work; a few Chrome-only features inside some extensions may not.
+VPN extensions such as Proton VPN can't work (CloudBrowser can't let extensions control its
+connection) — use the Proton VPN app for Windows instead.
+
+Extension support comes from [electron-chrome-extensions](https://github.com/samuelmaddock/electron-browser-shell),
+which is licensed under the GPL-3.0, so CloudBrowser is now also released under the
+**GNU GPL v3 or later** (it was MIT before 1.3).
 
 ## Notes
 

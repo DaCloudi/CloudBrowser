@@ -100,7 +100,7 @@ function render() {
   const box = $('sites');
   box.hidden = !info.show || info.incognito;
   const tiles = sites.map(tile);
-  if (info.mode === 'custom' && sites.length < MAX_SHORTCUTS) tiles.push(addTile());
+  if (info.mode === 'custom' && !info.incognito && sites.length < MAX_SHORTCUTS) tiles.push(addTile());
   box.replaceChildren(...tiles);
 }
 

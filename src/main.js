@@ -683,13 +683,17 @@ function topSites() {
 }
 
 function shortTitle(title, host) {
-  // "Some Page - YouTube" -> "YouTube"; fall back to the site name.
-  const parts = String(title).split(/\s+[-–—|·]\s+/);
-  const last = parts[parts.length - 1].trim();
-  if (parts.length > 1 && last.length <= 24) return last;
-  if (title.length <= 24) return title;
-  const name = host.split('.').slice(-2, -1)[0] || host;
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  // Name a tile after the site: "Roblox: Sign Up to Play!" -> "Roblox", "Watch - YouTube" -> "YouTube".
+  const labels = host.toLowerCase().split('.').filter(l => l !== 'www').slice(0, -1)
+    .filter((l, i, a) => !(i === a.length - 1 && a.length > 1 && ['co', 'com', 'org', 'net', 'gov', 'ac'].includes(l)));
+  const squash = x => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const parts = String(title).split(/\s+[-–—|·:]\s+|:\s+/).map(x => x.trim()).filter(Boolean);
+  for (const label of labels) {
+    const named = parts.find(x => x.length <= 24 && squash(x).includes(label));
+    if (named) return named;
+  }
+  const label = labels[0] || host;
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function toggleBookmark(tab) {
