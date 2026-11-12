@@ -48,8 +48,11 @@ You can also start a release by hand from the repository's **Actions** tab → *
 
 ## Features
 
-- A calm home page with drifting clouds, search and shortcuts: your most-visited sites, or your own (add, edit, drag to reorder)
+- A plain home page in CloudBrowser blue with search and shortcuts: your most-visited sites, or your own (add, edit, drag to reorder)
 - Closing the last tab opens a fresh home tab instead of quitting
+- Sleeping tabs free memory from tabs you haven't used for a while; restored tabs only load when you click them
+- Privacy: tracking codes removed from links, Global Privacy Control + Do Not Track, referrers trimmed to the site (none from incognito)
+- Incognito: optional "always through the VPN", hidden from screenshots and screen recording, nothing saved
 - Tabs in the title bar, or vertical tabs in a collapsible sidebar
 - Chrome extensions from the Chrome Web Store (e.g. Bitwarden, BTRoblox, RoPro), kept in a puzzle-piece "folder" in the toolbar; pin favourites to show them directly
 - Incognito windows (Ctrl+Shift+N) that forget everything when closed, and multiple windows (Ctrl+N)
@@ -106,8 +109,10 @@ Click **VPN** in the toolbar.
 - **My VPN (WireGuard)** — import a WireGuard `.conf` file from your VPN provider. With a free Proton VPN
   account: account.protonvpn.com → Downloads → WireGuard configuration → choose a free server → download.
 
-The VPN covers every window, including incognito. While it's connecting, pages don't load at all, so nothing
-leaks over your normal connection. Tor (torproject.org) and [wireproxy](https://github.com/windtf/wireproxy)
+The VPN covers every window, including incognito, and CloudBrowser's own background traffic. While it's connecting
+(or if it drops) pages don't load at all, so nothing leaks over your normal connection; it reconnects by itself.
+DNS lookups go through the VPN too, and WebRTC can't reveal your real IP. **New IP** gets a fresh address.
+You can also send only incognito windows through it (Settings → Privacy → Incognito). Tor (torproject.org) and [wireproxy](https://github.com/windtf/wireproxy)
 are downloaded at build time by `scripts/fetch-vendor.mjs` and bundled with the installer.
 
 ## Extensions
