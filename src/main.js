@@ -1455,16 +1455,6 @@ function siteOf(host) {
 function isGoogleSignIn(url) {
   try { const h = new URL(url).hostname; return h === 'accounts.google.com' || h === 'accounts.youtube.com'; } catch { return false; }
 }
-function chromeBrandHeaders() {
-  const full = process.versions.chrome;
-  const major = full.split('.')[0];
-  return {
-    'sec-ch-ua': `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not_A Brand";v="24"`,
-    'sec-ch-ua-full-version-list': `"Google Chrome";v="${full}", "Chromium";v="${full}", "Not_A Brand";v="24.0.0.0"`,
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
 
 // "Do not sell or share my data" signals, and less revealing referrers. Incognito never tells
 // another site which page you came from.
@@ -1474,14 +1464,11 @@ function setupPrivacyHeaders() {
       const h = details.requestHeaders;
       if (settings.data.sendGpc) { h['Sec-GPC'] = '1'; h['DNT'] = '1'; }
       if (isGoogleSignIn(details.url)) {
-        const brand = chromeBrandHeaders();
+        const major = process.versions.chrome.split('.')[0];
         for (const k of Object.keys(h)) {
           const lk = k.toLowerCase();
-          if (lk === 'sec-ch-ua' || lk === 'sec-ch-ua-full-version-list') { delete h[k]; }
-        }
-        h['sec-ch-ua'] = brand['sec-ch-ua'];
-        if (Object.keys(details.requestHeaders).some(k => /full-version-list/i.test(k)) || details.resourceType === 'mainFrame') {
-          h['sec-ch-ua-full-version-list'] = brand['sec-ch-ua-full-version-list'];
+          if (lk === 'sec-ch-ua' && !/Google Chrome/.test(h[k])) h[k] = `${h[k]}, "Google Chrome";v="${major}"`;
+          if (lk === 'sec-ch-ua-full-version-list' && !/Google Chrome/.test(h[k])) h[k] = `${h[k]}, "Google Chrome";v="${process.versions.chrome}"`;
         }
       }
       const ref = h.Referer || h.referer;
@@ -2301,9 +2288,17 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     }
 
     // Look like plain Chrome to websites (some sites, e.g. Google sign-in, refuse "Electron").
-    const ua = session.defaultSession.getUserAgent().replace(/\s(Electron|cloudbrowser|CloudBrowser)\/\S+/g, '');
+    // Like real Chrome: only the major version is shared ("Chrome/156.0.0.0"), which also reveals less about you.
+    const major = process.versions.chrome.split('.')[0];
+    const ua = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+    const langs = [];
+    for (const l of (app.getPreferredSystemLanguages ? app.getPreferredSystemLanguages() : [app.getLocale()])) {
+      if (l && !langs.includes(l)) langs.push(l);
+      const base = l && l.split('-')[0];
+      if (base && !langs.includes(base)) langs.push(base);
+    }
     app.userAgentFallback = ua;
-    for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) session.fromPartition(p).setUserAgent(ua);
+    for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) session.fromPartition(p).setUserAgent(ua, langs.join(',') || 'en-US,en');
 
     nativeTheme.on('updated', () => {
       for (const w of windows) { try { w.win.setTitleBarOverlay(titleBarColors(w.incognito)); } catch {} }
@@ -2393,7 +2388,7 @@ async function smokeTest() {
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
 
   await step('google sign-in', async () => {
-    S('brand hints used for Google sign-in', JSON.stringify(chromeBrandHeaders()));
+    S('user agent', session.fromPartition(NORMAL_PARTITION).getUserAgent());
     const wc = t.view.webContents;
     load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
     await waitFor(() => !wc.isLoading(), 20000);
