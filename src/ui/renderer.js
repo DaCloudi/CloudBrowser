@@ -1,8 +1,22 @@
-// CloudBrowser - browser UI (tab strip + toolbar)
+// CloudBrowser - browser UI (tab strip, toolbar, bookmarks bar, find bar, suggestions)
+'use strict';
 const $ = id => document.getElementById(id);
 const address = $('address');
 let state = null;
-let editing = false; // don't overwrite the address bar while the user is typing
+let editing = false;      // the user is typing in the address bar
+let lastActiveId = null;
+
+const ICONS = {
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  sound: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+  muted: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
+};
+
+// ---------- toolbar buttons ----------
 
 $('newtab').onclick = () => cloud.newTab();
 $('back').onclick = () => cloud.back();
@@ -11,49 +25,207 @@ $('home').onclick = () => cloud.home();
 $('private').onclick = () => cloud.togglePrivate();
 $('menu').onclick = () => cloud.menu();
 $('update').onclick = () => cloud.installUpdate();
-$('reload').onclick = () => {
-  const t = activeTab();
-  t && t.loading ? cloud.stop() : cloud.reload();
-};
+$('star').onclick = () => cloud.toggleBookmark();
+$('shield').onclick = () => cloud.openInternal('settings', '#privacy');
+$('downloads').onclick = () => cloud.openInternal('downloads');
+$('reload').onclick = () => { const t = activeTab(); t && t.loading ? cloud.stop() : cloud.reload(); };
+for (const id of ['back', 'forward']) {
+  $(id).addEventListener('auxclick', e => { if (e.button === 1) cloud[id](); });
+}
 
-$('addressform').onsubmit = e => {
-  e.preventDefault();
+// Report the UI's height so pages sit right below it.
+new ResizeObserver(() => cloud.setHeight($('chrome').getBoundingClientRect().height)).observe($('chrome'));
+
+// ---------- address bar + suggestions ----------
+
+let rows = [];
+let sel = 0;
+let typed = '';
+
+function looksLikeUrl(s) {
+  s = s.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^localhost(:\d+)?(\/|$)/i.test(s) ||
+    (!/\s/.test(s) && /^[^\s/]+\.[a-z][a-z0-9-]{1,}(:\d+)?([/?#].*)?$/i.test(s));
+}
+
+function openOverlay() {
+  if (document.body.classList.contains('overlay')) return;
+  const r = $('addressbox').getBoundingClientRect();
+  const box = $('suggestions');
+  box.style.left = (r.left - 4) + 'px';
+  box.style.top = (r.bottom + 6) + 'px';
+  box.style.width = (r.width + 8) + 'px';
+  document.body.classList.add('overlay');
+  cloud.setOverlay(true);
+}
+function closeOverlay() {
+  if (!document.body.classList.contains('overlay')) return;
+  document.body.classList.remove('overlay');
+  cloud.setOverlay(false);
+  rows = [];
+}
+
+function highlight(text, q) {
+  const span = document.createElement('span');
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (!q || i < 0) { span.textContent = text; return span; }
+  const b = document.createElement('b');
+  b.textContent = text.slice(i, i + q.length);
+  span.append(text.slice(0, i), b, text.slice(i + q.length));
+  return span;
+}
+
+function renderSuggestions() {
+  const box = $('suggestions');
+  box.replaceChildren(...rows.map((r, i) => {
+    const el = document.createElement('div');
+    el.className = 'sg' + (i === sel ? ' sel' : '');
+    el.insertAdjacentHTML('afterbegin', ICONS[r.icon]);
+    const t = document.createElement('span');
+    t.className = 't';
+    t.append(highlight(r.title, typed));
+    const u = document.createElement('span');
+    u.className = 'u';
+    u.textContent = r.sub || '';
+    el.append(t, u);
+    el.onmousedown = e => {
+      e.preventDefault();
+      go(r, e.button === 1 || e.ctrlKey);
+    };
+    el.onmousemove = () => { if (sel !== i) { sel = i; renderSuggestions(); } };
+    return el;
+  }));
+}
+
+async function updateSuggestions() {
+  const q = address.value;
+  typed = q.trim();
+  if (!typed) { closeOverlay(); return; }
+  const items = await cloud.suggest(q);
+  if (address.value !== q || document.activeElement !== address) return;
+  const engine = state ? state.engineName : 'DuckDuckGo';
+  rows = [];
+  if (looksLikeUrl(typed)) rows.push({ icon: 'globe', title: typed, sub: '', text: typed });
+  rows.push({ icon: 'search', title: typed, sub: `${engine} search`, text: typed, search: true });
+  for (const it of items) {
+    rows.push({ icon: it.type === 'bookmark' ? 'star' : 'clock', title: it.title || it.url, sub: it.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''), url: it.url });
+  }
+  sel = 0;
+  openOverlay();
+  renderSuggestions();
+}
+
+function go(row, newTab) {
+  const target = row ? (row.url || row.text) : address.value;
+  closeOverlay();
   editing = false;
-  cloud.navigate(address.value);
+  if (row && row.search) cloud.search(target, newTab);
+  else cloud.navigate(target, newTab);
   address.blur();
-};
+}
+
+address.addEventListener('input', () => { editing = true; updateSuggestions(); });
 address.addEventListener('focus', () => { editing = true; address.select(); });
-address.addEventListener('blur', () => { editing = false; render(); });
+address.addEventListener('blur', () => { setTimeout(() => { if (document.activeElement !== address) { editing = false; closeOverlay(); render(); } }, 0); });
 address.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { editing = false; address.blur(); render(); }
+  const open = document.body.classList.contains('overlay') && rows.length;
+  if (e.key === 'ArrowDown' && open) { e.preventDefault(); sel = (sel + 1) % rows.length; renderSuggestions(); address.value = rows[sel].url || rows[sel].text; }
+  else if (e.key === 'ArrowUp' && open) { e.preventDefault(); sel = (sel - 1 + rows.length) % rows.length; renderSuggestions(); address.value = rows[sel].url || rows[sel].text; }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    const newTab = e.altKey;
+    if (open && sel > 0) go(rows[sel], newTab);
+    else go(null, newTab);
+  }
+  else if (e.key === 'Escape') {
+    e.preventDefault();
+    if (open) { closeOverlay(); address.value = typed; }
+    else { editing = false; address.blur(); render(); cloud.focusPage(); }
+  }
 });
+$('backdrop').addEventListener('mousedown', e => { e.preventDefault(); closeOverlay(); address.blur(); cloud.focusPage(); });
 
 cloud.onFocusAddress(() => { address.focus(); address.select(); });
+
+// ---------- find bar ----------
+
+const findInput = $('find-input');
+function openFind() {
+  $('findbar').hidden = false;
+  findInput.focus();
+  findInput.select();
+  if (findInput.value) cloud.find(findInput.value, { newSearch: true, forward: true });
+}
+function closeFind() {
+  if ($('findbar').hidden) return;
+  $('findbar').hidden = true;
+  $('find-count').textContent = '';
+  findInput.classList.remove('none');
+  cloud.findStop();
+}
+function findNext(forward) {
+  if ($('findbar').hidden) { openFind(); return; }
+  if (findInput.value) cloud.find(findInput.value, { forward, newSearch: false });
+}
+findInput.addEventListener('input', () => cloud.find(findInput.value, { newSearch: true, forward: true }));
+findInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); findNext(!e.shiftKey); }
+  if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+});
+$('find-next').onclick = () => findNext(true);
+$('find-prev').onclick = () => findNext(false);
+$('find-close').onclick = closeFind;
+cloud.onFindOpen(openFind);
+cloud.onFindNext(o => findNext(o.forward));
+cloud.onFindClose(closeFind);
+cloud.onFindResult(r => {
+  const none = !!findInput.value && r.matches === 0;
+  findInput.classList.toggle('none', none);
+  $('find-count').textContent = !findInput.value ? '' : none ? 'No results' : `${r.active} of ${r.matches}`;
+});
+
+// ---------- downloads ----------
+
+cloud.onDownloadDone(() => {
+  const b = $('downloads');
+  b.classList.remove('bounce');
+  void b.offsetWidth;
+  b.classList.add('bounce');
+});
+
+// ---------- rendering ----------
+
 cloud.onState(s => { state = s; render(); });
 
-function activeTab() {
-  return state && state.tabs.find(t => t.id === state.activeId);
-}
+function activeTab() { return state && state.tabs.find(t => t.id === state.activeId); }
 
 function displayUrl(url) {
   if (!url || url === 'about:blank' || url.startsWith('data:')) return '';
   return url;
 }
 
-function render() {
-  if (!state) return;
-  const tab = activeTab();
+function siteKind(url) {
+  if (!url) return 'search';
+  if (url.startsWith('https://')) return 'secure';
+  if (url.startsWith('cloud://')) return 'internal';
+  if (url.startsWith('http://')) return 'insecure';
+  return 'search';
+}
 
-  // Tabs
+function renderTabs() {
   const strip = $('tabs');
+  const narrow = state.tabs.length > 0 && (strip.parentElement.clientWidth - 60) / state.tabs.length < 90;
   strip.replaceChildren(...state.tabs.map(t => {
     const el = document.createElement('div');
-    el.className = 'tab' + (t.id === state.activeId ? ' active' : '');
-    el.title = t.title;
+    el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow ? ' narrow' : '');
+    el.title = t.title + (t.private ? ' (private)' : '');
     el.onmousedown = e => {
-      if (e.button === 1) { e.preventDefault(); cloud.closeTab(t.id); } // middle-click closes
-      else if (e.button === 0) cloud.switchTab(t.id);
+      if (e.button === 0) cloud.switchTab(t.id);
+      if (e.button === 1) e.preventDefault();
     };
+    el.onauxclick = e => { if (e.button === 1) cloud.closeTab(t.id); };
+    el.oncontextmenu = e => { e.preventDefault(); cloud.tabMenu(t.id); };
+    el.ondblclick = e => e.stopPropagation();
 
     let icon;
     if (t.loading) {
@@ -63,48 +235,135 @@ function render() {
       icon = document.createElement('img');
       icon.className = 'favicon';
       icon.src = t.favicon;
-      icon.onerror = () => { icon.removeAttribute('src'); icon.classList.add('placeholder'); };
+      icon.onerror = () => { const d = document.createElement('div'); d.className = 'favicon placeholder'; icon.replaceWith(d); };
     } else {
       icon = document.createElement('div');
       icon.className = 'favicon placeholder';
     }
+    el.append(icon);
 
     const title = document.createElement('span');
     title.className = 'title';
     title.textContent = t.title;
+    el.append(title);
+
+    if (t.private) { const d = document.createElement('span'); d.className = 'private-dot'; el.append(d); }
+    if (t.audible || t.muted) {
+      const a = document.createElement('button');
+      a.className = 'audio';
+      a.title = t.muted ? 'Unmute tab' : 'Mute tab';
+      a.innerHTML = t.muted ? ICONS.muted : ICONS.sound;
+      a.onmousedown = e => e.stopPropagation();
+      a.onclick = () => cloud.toggleMute(t.id);
+      el.append(a);
+    }
 
     const close = document.createElement('button');
     close.className = 'close';
-    close.textContent = '×';
     close.title = 'Close tab (Ctrl+W)';
+    close.innerHTML = ICONS.close;
     close.onmousedown = e => e.stopPropagation();
     close.onclick = () => cloud.closeTab(t.id);
-
-    el.append(icon);
-    if (t.private) { const d = document.createElement('span'); d.className = 'private-dot'; d.title = 'Private tab'; el.append(d); }
-    el.append(title, close);
+    el.append(close);
     return el;
   }));
+}
 
-  // Toolbar
+function renderBookmarksBar() {
+  const bar = $('bookmarksbar');
+  bar.classList.toggle('show', !!state.showBookmarksBar);
+  if (!state.showBookmarksBar) return;
+  if (!state.bookmarks.length) {
+    const hint = document.createElement('span');
+    hint.className = 'bm-hint';
+    hint.textContent = 'Press Ctrl+D or click ☆ to bookmark a page. It will show up here.';
+    bar.replaceChildren(hint);
+    return;
+  }
+  bar.replaceChildren(...state.bookmarks.map(b => {
+    const el = document.createElement('button');
+    el.className = 'bm';
+    el.title = `${b.title}\n${b.url}`;
+    let icon;
+    if (b.favicon) {
+      icon = document.createElement('img');
+      icon.src = b.favicon;
+      icon.onerror = () => { const d = document.createElement('span'); d.className = 'dot'; icon.replaceWith(d); };
+    } else {
+      icon = document.createElement('span');
+      icon.className = 'dot';
+    }
+    const label = document.createElement('span');
+    label.textContent = b.title || b.url;
+    el.append(icon, label);
+    el.onclick = e => cloud.openBookmark(b.url, e.ctrlKey);
+    el.onauxclick = e => { if (e.button === 1) cloud.openBookmark(b.url, true); };
+    el.oncontextmenu = e => { e.preventDefault(); cloud.bookmarkMenu(b.id); };
+    return el;
+  }));
+}
+
+function render() {
+  if (!state) return;
+  const tab = activeTab();
+
+  if (state.activeId !== lastActiveId) {
+    lastActiveId = state.activeId;
+    if (!editing) closeOverlay();
+  }
+
+  renderTabs();
+  renderBookmarksBar();
+
   $('back').disabled = !(tab && tab.canGoBack);
   $('forward').disabled = !(tab && tab.canGoForward);
   $('reload').classList.toggle('loading', !!(tab && tab.loading));
-  $('reload').title = tab && tab.loading ? 'Stop' : 'Reload (F5)';
+  $('reload').title = tab && tab.loading ? 'Stop (Esc)' : 'Reload (F5)';
   $('private').classList.toggle('on', state.privateMode);
+  $('private').title = state.privateMode ? 'Private mode is ON for new tabs (Ctrl+Shift+P)' : 'Private mode for new tabs (Ctrl+Shift+P)';
   document.body.classList.toggle('private-mode', !!(tab && tab.private));
 
-  if (!editing) address.value = tab ? displayUrl(tab.url) : '';
-  $('lock').classList.toggle('on', !!(tab && tab.url.startsWith('https://')));
+  const url = tab ? tab.url : '';
+  if (!editing) address.value = displayUrl(url);
+  address.placeholder = `Search ${state.engineName} or enter address`;
+  const kind = siteKind(displayUrl(url));
+  $('siteicon').dataset.kind = kind;
+  $('siteicon').title = { secure: 'Secure connection', insecure: 'Not secure: this site doesn’t use HTTPS', internal: 'CloudBrowser page', search: '' }[kind];
 
-  // Progress bar
+  const star = $('star');
+  star.disabled = !tab || !/^(https?|cloud|file):/.test(url);
+  star.classList.toggle('on', !!(tab && tab.bookmarked));
+  star.title = tab && tab.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
+
+  const shield = $('shield');
+  shield.classList.toggle('off', !state.adblock);
+  const blocked = tab ? tab.blocked : 0;
+  $('shield-count').textContent = state.adblock && blocked ? (blocked > 99 ? '99+' : String(blocked)) : '';
+  shield.title = state.adblock
+    ? `${blocked} ad${blocked === 1 ? '' : 's'} and tracker${blocked === 1 ? '' : 's'} blocked on this page`
+    : 'Ad & tracker blocking is off';
+
+  const dl = state.downloads || {};
+  const db = $('downloads');
+  db.classList.toggle('show', !!dl.show);
+  db.classList.toggle('active', dl.active > 0);
+  if (dl.active > 0) {
+    const pct = dl.progress == null ? 25 : Math.round(dl.progress * 100);
+    $('dl-ring').style.background = `conic-gradient(var(--accent) ${pct}%, color-mix(in srgb, var(--accent) 18%, transparent) 0)`;
+    $('dl-ring').style.mask = 'radial-gradient(circle, transparent 9px, #000 9.5px)';
+    db.title = `${dl.active} download${dl.active === 1 ? '' : 's'} in progress` + (dl.progress != null ? ` (${Math.round(dl.progress * 100)}%)` : '');
+  } else {
+    db.title = 'Downloads (Ctrl+J)';
+  }
+
   const p = $('progress');
-  if (tab && tab.loading) { p.className = 'loading'; }
-  else if (p.className === 'loading') { p.className = 'done'; }
+  if (tab && tab.loading) p.className = 'loading';
+  else if (p.className === 'loading') p.className = 'done';
 
-  // Update button
   const u = state.update || {};
   const upd = $('update');
   upd.classList.toggle('show', u.status === 'ready');
   if (u.status === 'ready') upd.textContent = `Update ${u.version} ready – restart`;
 }
+
+window.addEventListener('resize', () => { if (state) renderTabs(); closeOverlay(); });

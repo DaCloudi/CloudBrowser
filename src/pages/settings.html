@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline';">
+  <meta name="color-scheme" content="light dark">
+  <title>Settings</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/common.css">
+</head>
+<body>
+  <nav>
+    <div class="brand"><img src="/icon.png" alt=""><span>CloudBrowser</span></div>
+    <a href="cloud://settings/" class="on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2"/><circle cx="12" cy="12" r="6.6"/></svg><span>Settings</span></a><a href="cloud://history/" class=""><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span>History</span></a><a href="cloud://bookmarks/" class=""><svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg><span>Bookmarks</span></a><a href="cloud://downloads/" class=""><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg><span>Downloads</span></a>
+  </nav>
+  <main>
+    <h1>Settings</h1>
+
+    <section id="search">
+      <h2>Search &amp; home page</h2>
+      <div class="row"><div><div class="label">Search engine</div><div class="hint">Used when you type something that isn’t a web address.</div></div>
+        <select id="searchEngine"></select></div>
+      <div class="row"><div><div class="label">Home page</div><div class="hint">Opens in new tabs and with the ⌂ button.</div></div>
+        <div class="inline"><input id="homePage" type="text" spellcheck="false"><button id="homeReset" class="btn">Use search engine</button></div></div>
+    </section>
+
+    <section id="startup">
+      <h2>Startup &amp; appearance</h2>
+      <label class="row"><div><div class="label">Reopen my tabs</div><div class="hint">Open the tabs you had last time when CloudBrowser starts. Private tabs are never reopened.</div></div>
+        <input type="checkbox" class="switch" id="restoreTabs"></label>
+      <div class="row"><div><div class="label">Theme</div></div>
+        <select id="theme"><option value="system">Same as Windows</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+      <label class="row"><div><div class="label">Show bookmarks bar</div><div class="hint">Ctrl+Shift+B</div></div>
+        <input type="checkbox" class="switch" id="showBookmarksBar"></label>
+    </section>
+
+    <section id="privacy">
+      <h2>Privacy &amp; security</h2>
+      <label class="row"><div><div class="label">Block ads and trackers</div><div class="hint" id="adblockHint"></div></div>
+        <input type="checkbox" class="switch" id="adblock"></label>
+
+      <h3>Site permissions</h3>
+      <p class="hint">Sites must ask before using your camera, microphone, location or notifications. Your answers are listed here.</p>
+      <div id="permissions" class="list"></div>
+
+      <h3>Clear browsing data</h3>
+      <div class="checks">
+        <label><input type="checkbox" id="c-history" checked> Browsing history</label>
+        <label><input type="checkbox" id="c-cookies" checked> Cookies and site data <span class="hint">(signs you out of most sites)</span></label>
+        <label><input type="checkbox" id="c-cache" checked> Cached images and files</label>
+        <label><input type="checkbox" id="c-downloads"> Download list <span class="hint">(files stay on your computer)</span></label>
+        <label><input type="checkbox" id="c-permissions"> Site permissions</label>
+      </div>
+      <button id="clear" class="btn danger">Clear data</button> <span id="clearDone" class="hint"></span>
+    </section>
+
+    <section id="downloads-settings">
+      <h2>Downloads</h2>
+      <div class="row"><div><div class="label">Save files to</div><div class="hint" id="dlFolder"></div></div>
+        <button id="openDlFolder" class="btn">Open folder</button></div>
+      <label class="row"><div><div class="label">Ask where to save each file</div></div>
+        <input type="checkbox" class="switch" id="askDownloadLocation"></label>
+    </section>
+
+    <section id="about">
+      <h2>About CloudBrowser</h2>
+      <div class="about">
+        <img src="/icon.png" alt="">
+        <div>
+          <div class="label big">CloudBrowser <span id="version"></span></div>
+          <div class="hint" id="engineVersions"></div>
+          <div id="updateStatus" class="update"></div>
+        </div>
+        <div class="grow"></div>
+        <button id="checkUpdates" class="btn">Check for updates</button>
+        <button id="installUpdate" class="btn primary" hidden>Restart to update</button>
+      </div>
+      <p class="hint"><a href="https://github.com/DaCloudi/CloudBrowser">github.com/DaCloudi/CloudBrowser</a></p>
+    </section>
+  </main>
+  <script src="/common.js"></script>
+  <script src="/settings.js"></script>
+</body>
+</html>

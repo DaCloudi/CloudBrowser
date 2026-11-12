@@ -1,7 +1,7 @@
 {
   "name": "cloudbrowser",
   "productName": "CloudBrowser",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "A lightweight, private web browser that searches with DuckDuckGo.",
   "main": "src/main.js",
   "author": "CloudBrowser",
@@ -12,6 +12,7 @@
     "release": "electron-builder --win --publish always"
   },
   "dependencies": {
+    "@ghostery/adblocker-electron": "^2.0.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {

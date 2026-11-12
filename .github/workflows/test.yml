@@ -1,0 +1,42 @@
+# Starts CloudBrowser on a real Windows machine, clicks through it automatically
+# (src/main.js -> smokeTest) and prints the results and screenshots to the log.
+name: Smoke test
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+
+      - name: Run from source
+        shell: bash
+        env:
+          CLOUD_SMOKE: '1'
+          CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-dev.log
+        run: |
+          timeout 240 npx electron . || true
+          cat "$CLOUD_SMOKE_LOG"
+          grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
+
+      - name: Build the app (no installer)
+        run: npx electron-builder --win --dir --publish never
+
+      - name: Run the packaged app
+        shell: bash
+        env:
+          CLOUD_SMOKE: '1'
+          CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-packaged.log
+        run: |
+          timeout 240 ./dist/win-unpacked/CloudBrowser.exe || true
+          cat "$CLOUD_SMOKE_LOG" | grep -v "^\[SHOT"
+          grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
