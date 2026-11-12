@@ -334,7 +334,7 @@ function wireTab(tab) {
   wc.on('enter-html-full-screen', () => { htmlFullscreen = true; win.setFullScreen(true); layout(); });
   wc.on('leave-html-full-screen', () => { htmlFullscreen = false; if (!userFullscreen) win.setFullScreen(false); layout(); });
   if (SMOKE) {
-    wc.on('console-message', (ev, _lvl, msg) => { const m = ev.message ?? msg; if (wc.getURL().startsWith('cloud://')) log('[page console]', m); });
+    wc.on('console-message', (ev) => { if (wc.getURL().startsWith('cloud://')) log('[page console]', ev.message); });
     wc.on('preload-error', (_e, p, err) => log('[preload-error]', p, String(err)));
   }
 }
@@ -655,11 +655,20 @@ function applyAdblock() {
   if (!blocker) return;
   for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) {
     const s = session.fromPartition(p);
-    try {
-      if (settings.data.adblock && !blockingOn.has(p)) { blocker.enableBlockingInSession(s); blockingOn.add(p); }
-      else if (!settings.data.adblock && blockingOn.has(p)) { blocker.disableBlockingInSession(s); blockingOn.delete(p); }
-    } catch (e) {
-      log('Ad blocker session error', p, e.message);
+    if (settings.data.adblock && !blockingOn.has(p)) {
+      // The blocker registers global IPC handlers each time it is enabled for a session,
+      // which Electron refuses the second time. Its handlers work for every session, so
+      // drop the old one and let it register again.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try { blocker.enableBlockingInSession(s); blockingOn.add(p); break; } catch (e) {
+          const m = /second handler for '([^']+)'/.exec(e.message);
+          if (!m) { log('Ad blocker session error', p, e.message); break; }
+          ipcMain.removeHandler(m[1]);
+        }
+      }
+    } else if (!settings.data.adblock && blockingOn.has(p)) {
+      try { blocker.disableBlockingInSession(s); } catch (e) { log('Ad blocker disable error', p, e.message); }
+      blockingOn.delete(p);
     }
   }
 }
@@ -1076,7 +1085,7 @@ function createWindow(startUrl) {
   ui.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
   ui.webContents.on('before-input-event', (event, input) => { if (handleShortcut(input)) event.preventDefault(); });
   if (SMOKE) {
-    ui.webContents.on('console-message', (ev, _lvl, msg) => log('[ui console]', ev.message ?? msg));
+    ui.webContents.on('console-message', (ev) => log('[ui console]', ev.message));
     ui.webContents.on('preload-error', (_e, p, err) => log('[ui preload-error]', p, String(err)));
   }
   ui.webContents.once('did-finish-load', () => {
@@ -1205,9 +1214,38 @@ async function smokeTest() {
     const apiOnWeb = await tabs[0].view.webContents.executeJavaScript('typeof window.cloud').catch(() => 'ERR');
     S('cloud api exposed on normal website?', apiOnWeb);
 
-    const pt = createTab('https://example.org/', { isPrivate: true });
-    await wait(3000);
-    S('private tab history recorded?', history.data.items.some(h => h.url.includes('example.org')));
+    S('blocking sessions', [...blockingOn]);
+    const pt = createTab('https://www.theverge.com/', { isPrivate: true });
+    await wait(9000);
+    S('private tab blocked', pt.blocked, 'history recorded?', history.data.items.filter(h => h.url.includes('theverge')).length);
+    load(pt.view.webContents, 'https://example.org/');
+    await wait(2500);
+
+    // download
+    session.fromPartition(NORMAL_PARTITION).downloadURL('https://github.com/DaCloudi/CloudBrowser/releases/download/v1.0.1/latest.yml');
+    await wait(6000);
+    S('downloads', downloads.slice(0, 2).map(d => ({ f: d.filename, state: d.state, bytes: d.received, path: d.path })));
+    openInternal('downloads');
+    await wait(1500);
+    await shot('downloads-after');
+
+    // dark theme + address bar suggestions
+    setSetting('theme', 'dark');
+    await wait(800);
+    await ui.webContents.executeJavaScript(`(() => { const a = document.getElementById('address'); a.focus(); a.value = 'exam'; a.dispatchEvent(new Event('input')); })()`);
+    await wait(1500);
+    S('overlay open', overlayOpen);
+    await shot('suggest-dark');
+    await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    await wait(500);
+    S('overlay after escape', overlayOpen);
+    openInternal('settings');
+    await wait(1500);
+    await shot('settings-dark');
+    setSetting('theme', 'system');
+    switchTab(pt.id);
+    await wait(300);
     closeTab(pt.id);
     reopenClosedTab();
     await wait(1500);
