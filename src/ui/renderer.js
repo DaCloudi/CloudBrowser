@@ -235,7 +235,7 @@ cloud.onVpn(i => { vpnInfo = i; renderVpn(); });
 
 function vpnStatusText(i) {
   if (!i) return '';
-  const where = i.country ? ` · ${i.country}` : '';
+  const where = i.location ? ` · ${i.location}` : '';
   switch (i.status) {
     case 'on': return `Protected${where} · ${i.ip}`;
     case 'connecting': return i.mode === 'tor' ? `Connecting to Tor… ${i.progress || 0}%` : 'Connecting…';

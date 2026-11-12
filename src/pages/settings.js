@@ -48,9 +48,8 @@ function renderVpn(v) {
   $('vpnCountryRow').hidden = v.mode !== 'tor';
   $('vpnWgRow').hidden = v.mode !== 'wireguard';
   $('vpnWgName').textContent = v.wgConfigName ? `Using ${v.wgConfigName}` : 'No config imported yet';
-  const where = v.country && v.status === 'on' ? '' : '';
   $('vpnStatus').textContent = !v.enabled ? 'Off'
-    : v.status === 'on' ? `Connected${v.country ? ' via ' + v.country : ''} · IP ${v.ip}${where}`
+    : v.status === 'on' ? `Connected${v.location ? ' via ' + v.location : ''} · IP ${v.ip}`
     : v.status === 'connecting' ? `Connecting… ${v.progress || 0}%`
     : v.status === 'error' ? `Problem: ${v.error}` : '';
 }

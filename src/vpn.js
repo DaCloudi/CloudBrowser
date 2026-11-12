@@ -9,7 +9,7 @@
 // answering), so nothing leaks out over the normal connection ("kill switch").
 'use strict';
 
-const { app, session, net } = require('electron');
+const { app, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -30,7 +30,7 @@ class Vpn {
     this.log = log || console.log;
     this.onChange = onChange || (() => {});
     this.proc = null;
-    this.state = { status: 'off', progress: 0, ip: null, country: null, error: null };
+    this.state = { status: 'off', progress: 0, ip: null, location: null, error: null };
     this.generation = 0;
   }
 
@@ -68,7 +68,7 @@ class Vpn {
     this.stopProcess();
     this.settings.data.vpnEnabled = true;
     this.settings.save();
-    this.set({ status: 'connecting', progress: 0, ip: null, country: null, error: null });
+    this.set({ status: 'connecting', progress: 0, ip: null, location: null, error: null });
     await this.applyProxy(true); // kill switch: traffic goes to the (not yet running) proxy
     try {
       if (this.mode === 'tor') await this.startTor(gen);
@@ -89,7 +89,7 @@ class Vpn {
     this.settings.save();
     this.stopProcess();
     await this.applyProxy(false);
-    this.set({ status: 'off', progress: 0, ip: null, country: null, error: null });
+    this.set({ status: 'off', progress: 0, ip: null, location: null, error: null });
   }
 
   async restartIfOn() { if (this.settings.data.vpnEnabled) await this.start(); }
@@ -206,7 +206,7 @@ class Vpn {
     });
   }
 
-  // Ask the internet what our address is, through the VPN.
+  // Ask the internet what our address is, through the VPN (using a session that goes via the proxy).
   async verify(gen) {
     const s = session.fromPartition('cloudbrowser-vpn-check');
     await s.setProxy({ proxyRules: `socks5://127.0.0.1:${this.port}` });
@@ -215,27 +215,37 @@ class Vpn {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 25000);
       try {
-        const res = await net.fetch(url, { session: s, signal: ctrl.signal, bypassCustomProtocolHandlers: true });
+        const res = await s.fetch(url, { signal: ctrl.signal, cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
       } finally { clearTimeout(t); }
     };
-    let ip = null, country = null, lastErr = null;
-    for (let attempt = 0; attempt < 3 && !ip; attempt++) {
+    let ip = null, lastErr = null;
+    for (let attempt = 0; attempt < 4 && !ip; attempt++) {
       if (gen !== this.generation) return;
       try {
-        const j = await get('https://ipwho.is/');
-        ip = j.ip; country = j.country || null;
-      } catch (e) {
-        lastErr = e;
-        try { const j = await get('https://api.ipify.org?format=json'); ip = j.ip; } catch (e2) { lastErr = e2; }
-      }
-      if (!ip) await new Promise(r => setTimeout(r, 2500));
+        if (this.mode === 'tor') {
+          const j = await get('https://check.torproject.org/api/ip');
+          if (!j.IsTor) throw new Error('traffic is not going through Tor');
+          ip = j.IP;
+        } else {
+          ip = (await get('https://api.ipify.org?format=json')).ip;
+        }
+      } catch (e) { lastErr = e; await new Promise(r => setTimeout(r, 2500)); }
     }
     if (gen !== this.generation) return;
     if (!ip) throw new Error('Connected, but no traffic gets through' + (lastErr ? ` (${lastErr.message})` : '') + '.');
-    this.set({ status: 'on', ip, country, error: null });
-    this.log('VPN on:', this.mode, ip, country);
+    this.set({ status: 'on', ip, location: null, error: null });
+    this.log('VPN on:', this.mode, ip);
+    // Where are we? (best effort; some lookup services refuse Tor)
+    for (const url of ['https://ipwho.is/', 'https://ipapi.co/json/']) {
+      try {
+        const j = await get(url);
+        const country = j.country || j.country_name;
+        if (country && gen === this.generation) { this.set({ location: country }); this.log('VPN location:', country); }
+        if (country) break;
+      } catch {}
+    }
   }
 }
 

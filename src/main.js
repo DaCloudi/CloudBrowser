@@ -2125,7 +2125,8 @@ async function smokeTest() {
 
     setVpnCountry('de');
     await waitFor(() => vpn.info().status === 'on' || vpn.info().status === 'error', 150000);
-    S('vpn germany', JSON.stringify({ status: vpn.info().status, ip: vpn.info().ip, country: vpn.info().country, error: vpn.info().error }));
+    await wait(6000);
+    S('vpn germany', JSON.stringify({ status: vpn.info().status, ip: vpn.info().ip, location: vpn.info().location, error: vpn.info().error }));
 
     await vpn.stop();
     load(t.view.webContents, 'https://check.torproject.org/api/ip');
