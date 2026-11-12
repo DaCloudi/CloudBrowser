@@ -2387,28 +2387,29 @@ async function smokeTest() {
 
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
 
-  await step('google sign-in', async () => {
-    S('user agent', session.fromPartition(NORMAL_PARTITION).getUserAgent());
+  await step('page-load benchmark', async () => {
+    const sites = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'bench-sites.json'), 'utf8'));
+    // How busy is CloudBrowser's main process while pages load? (late timer ticks = it's blocked)
+    let worstLag = 0, last = Date.now(), lagSum = 0, ticks = 0;
+    const lagTimer = setInterval(() => { const now = Date.now(); const lag = now - last - 50; last = now; if (lag > worstLag) worstLag = lag; lagSum += Math.max(0, lag); ticks++; }, 50);
     const wc = t.view.webContents;
-    load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
-    await waitFor(() => !wc.isLoading(), 20000);
-    await wait(3000);
-    S('page sees', await wc.executeJavaScript(`navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then(v => JSON.stringify({ ua: navigator.userAgent, brands: navigator.userAgentData.brands, full: v.fullVersionList, chrome: typeof window.chrome }))`).catch(e => 'ERR ' + e.message));
-    load(wc, 'https://httpbin.org/headers'); await waitFor(() => !wc.isLoading(), 10000);
-    load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
-    await waitFor(() => !wc.isLoading(), 20000);
-    await wait(3000);
-    try { log('[SMOKE-FP] ' + await wc.executeJavaScript(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'fingerprint.js'), 'utf8'))); } catch (e) { S('fingerprint failed', e.message); }
-    await wc.executeJavaScript(`document.querySelector('#identifierId') && document.querySelector('#identifierId').focus()`);
-    await wait(500);
-    wc.insertText('cloudbrowser.signin.test.4821@gmail.com');
-    await wait(800);
-    await wc.executeJavaScript(`(document.querySelector('#identifierNext button') || document.querySelector('#identifierNext')).click()`).catch(() => {});
-    await wait(7000);
-    const txt = await wc.executeJavaScript('document.body.innerText').catch(e => 'ERR ' + e.message);
-    S('after entering email:', tabUrl(t).slice(0, 90), '|', JSON.stringify(txt.slice(0, 300)));
-    S('blocked as insecure browser?', /may not be secure|Couldn.t sign you in/i.test(txt));
-    await screen('google-signin');
+    for (const variant of ['normal', 'no-adblock']) {
+      if (variant === 'no-adblock') { setSetting('adblock', false); await wait(1000); }
+      for (const round of [1, 2]) {
+        for (const url of sites) {
+          worstLag = 0;
+          const t0 = Date.now();
+          load(wc, url);
+          let ms = null;
+          for (let i = 0; i < 300; i++) { await wait(100); if (await wc.executeJavaScript('document.readyState').catch(() => '') === 'complete' && wc.getURL() !== 'about:blank') { ms = Date.now() - t0; break; } }
+          const nav = await wc.executeJavaScript(`JSON.stringify((() => { const n = performance.getEntriesByType('navigation')[0] || {}; const f = performance.getEntriesByName('first-contentful-paint')[0]; return { ttfb: Math.round(n.responseStart || 0), fcp: Math.round(f ? f.startTime : 0), dcl: Math.round(n.domContentLoadedEventEnd || 0), load: Math.round(n.loadEventEnd || 0) }; })())`).catch(() => '{}');
+          log(`[BENCH cloud-${variant} r${round}] ${url} wall=${ms} ${nav} mainLagMax=${worstLag}`);
+        }
+      }
+    }
+    setSetting('adblock', true);
+    clearInterval(lagTimer);
+    S('avg main-process lag per 50ms tick', ticks ? (lagSum / ticks).toFixed(1) : 0);
   });
 
   S('DONE');

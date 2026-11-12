@@ -35,5 +35,18 @@ const text = await evalJs('document.body.innerText.slice(0, 300)');
 const url = await evalJs('location.href');
 console.log('[BASELINE] real Chrome after entering email:', url.slice(0, 90), '|', JSON.stringify(text));
 console.log('[BASELINE] real Chrome blocked as insecure?', /may not be secure|Couldn.t sign you in/i.test(text));
+// Page-load timing for the same sites CloudBrowser is timed on (2 rounds: first visit, repeat visit).
+const sites = JSON.parse(fs.readFileSync(new URL('./bench-sites.json', import.meta.url), 'utf8'));
+await send('Page.enable');
+for (const round of [1, 2]) {
+  for (const url of sites) {
+    const t0 = Date.now();
+    await send('Page.navigate', { url });
+    let ms = null;
+    for (let i = 0; i < 300; i++) { await wait(100); if (await evalJs('document.readyState') === 'complete') { ms = Date.now() - t0; break; } }
+    const nav = await evalJs(`JSON.stringify((() => { const n = performance.getEntriesByType('navigation')[0] || {}; const f = performance.getEntriesByName('first-contentful-paint')[0]; return { ttfb: Math.round(n.responseStart || 0), fcp: Math.round(f ? f.startTime : 0), dcl: Math.round(n.domContentLoadedEventEnd || 0), load: Math.round(n.loadEventEnd || 0) }; })())`);
+    console.log(`[BENCH chrome r${round}] ${url} wall=${ms} ${nav}`);
+  }
+}
 proc.kill();
 process.exit(0);
