@@ -30,14 +30,10 @@ body {
 }
 svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---------- plain background in CloudBrowser blue ---------- */
-body { background: var(--page); }
-:root { --page: #eaf2ff; --card: #ffffff; --card-hover: #f4f8ff; --field: #ffffff; --accent: #2563eb; --text: #17233b; --muted: #5f6f8c;
-  --shadow: 0 4px 18px rgba(30,70,150,.10), 0 1px 3px rgba(30,70,150,.08); }
-@media (prefers-color-scheme: dark) {
-  :root { --page: #0f1d3d; --card: #172a54; --card-hover: #1f3566; --field: #172a54; --accent: #6b9bff; --text: #e8eefc; --muted: #9fb1d6;
-    --shadow: 0 4px 18px rgba(0,0,0,.35); }
-}
+/* ---------- plain background, Discord Lite palette ---------- */
+body { background: var(--page); color-scheme: dark; }
+:root { --page: #07101b; --card: #0c1624; --card-hover: #152233; --field: #121e2d; --accent: #4d8dff; --text: #ffffff; --muted: #9aa7b6;
+  --shadow: 0 0 0 1px #19212b; }
 body.incognito { --page: #15101f; --card: #231a35; --card-hover: #2e2345; --field: #231a35; --accent: #a58bf5; --text: #ece6fb; --muted: #a497c4; }
 
 main {
@@ -161,3 +157,12 @@ input.switch:checked::after { transform: translateX(18px); }
 
 @media (prefers-color-scheme: dark) { .site .ico { background: #eef2fa; } }
 body.incognito .site .ico { background: #eef2fa; }
+
+#search { border: 1.5px solid #323b48; box-shadow: none; border-radius: 10px; }
+#search:focus-within { border-color: var(--accent); }
+#search button { background: #ffffff; color: #07101b; border-radius: 8px; }
+.site { border-radius: 10px; box-shadow: 0 0 0 1px #19212b; }
+.site .ico { background: #152233 !important; box-shadow: none; }
+#customize, #panel, #dialog { box-shadow: 0 0 0 1px #19212b, 0 12px 32px rgba(0,0,0,.5); border-radius: 10px; }
+#panel, #dialog { background: #0c1624; }
+.btn.primary { background: #ffffff; border-color: #ffffff; color: #07101b; font-weight: 600; }

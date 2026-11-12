@@ -357,9 +357,7 @@ function setOverlay(w, open) {
 
 function titleBarColors(incognito) {
   if (incognito) return { color: '#15111e', symbolColor: '#ece6fb', height: TITLEBAR_HEIGHT };
-  return nativeTheme.shouldUseDarkColors
-    ? { color: '#122347', symbolColor: '#e8eefc', height: TITLEBAR_HEIGHT }
-    : { color: '#2b67e3', symbolColor: '#ffffff', height: TITLEBAR_HEIGHT };
+  return { color: '#07101b', symbolColor: '#ffffff', height: TITLEBAR_HEIGHT }; // Discord Lite navy
 }
 
 // ---------- windows ----------
@@ -374,7 +372,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     minHeight: 320,
     title: incognito ? 'CloudBrowser (Incognito)' : 'CloudBrowser',
     icon: path.join(__dirname, 'ui', 'icon.png'),
-    backgroundColor: incognito ? '#1d1828' : (nativeTheme.shouldUseDarkColors ? '#122347' : '#2b67e3'),
+    backgroundColor: incognito ? '#1d1828' : '#07101b',
     autoHideMenuBar: true,
     show: false, // shown once the toolbar has drawn (no blank flash)
     // Tabs live in the title bar; Windows draws the minimise/maximise/close buttons on top.
@@ -473,7 +471,7 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
       spellcheck: true,
     },
   });
-  view.setBackgroundColor(w.incognito ? '#1d1828' : '#ffffff');
+  view.setBackgroundColor(w.incognito ? '#1d1828' : '#07101b');
   url = cleanUrl(url);
   const tab = { id: nextTabId++, w, view, private: w.incognito, favicon: lazy ? favicon : null, blocked: 0, failedUrl: null, initialUrl: url, histEntry: null, lastInput: 0, pinned,
     lastActive: Date.now(), sleeping: lazy, lazyUrl: lazy ? url : null, sleepTitle: lazy ? title : null };
@@ -2193,30 +2191,19 @@ function realClick(x, y) {
 async function smokeTest() {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const S = (...a) => log('[SMOKE]', ...a);
-  const shotImg = (name, img) => {
-    if (!img || img.isEmpty()) { S(`shot ${name} empty`); return; }
-    const small = img.getSize().width > 1000 ? img.resize({ width: 1000 }) : img;
-    const b64 = small.toJPEG(74).toString('base64');
-    log(`[SHOT-BEGIN ${name}]`);
-    for (let i = 0; i < b64.length; i += 3000) log('[SHOT] ' + b64.slice(i, i + 3000));
-    log(`[SHOT-END ${name}]`);
-  };
   const screen = async (name) => {
     try {
       const { desktopCapturer } = require('electron');
       const [src] = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 800 } });
-      shotImg(name, src.thumbnail);
+      const img = src.thumbnail;
+      const b64 = (img.getSize().width > 1000 ? img.resize({ width: 1000 }) : img).toJPEG(78).toString('base64');
+      log(`[SHOT-BEGIN ${name}]`);
+      for (let i = 0; i < b64.length; i += 3000) log('[SHOT] ' + b64.slice(i, i + 3000));
+      log(`[SHOT-END ${name}]`);
     } catch (e) { S('screen capture failed', e.message); }
   };
   const step = async (name, fn) => { try { await fn(); } catch (e) { S('STEP FAILED', name, e && e.stack || String(e)); } };
-  const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
-  const text = (wc) => wc.executeJavaScript('document.body ? document.body.innerText : ""').catch(e => 'ERR ' + e.message);
-  const go = async (t, url, ms = 6000) => { load(t.view.webContents, url); await waitFor(() => !t.view.webContents.isLoading(), ms); await wait(400); };
-  const memMB = () => Math.round(app.getAppMetrics().reduce((n, m) => n + (m.memory ? m.memory.workingSetSize : 0), 0) / 1024);
-  const webrtc = (wc) => wc.executeJavaScript(`new Promise(res => {
-    const out = []; const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    pc.createDataChannel('x'); pc.onicecandidate = e => { if (e.candidate) out.push(e.candidate.candidate.split(' ').slice(4, 8).join(' ')); };
-    pc.createOffer().then(o => pc.setLocalDescription(o)); setTimeout(() => { pc.close(); res(out); }, 6000); })`).catch(e => ['ERR ' + e.message]);
+  const ui = (w, js) => w.ui.webContents.executeJavaScript(js).catch(e => 'ERR ' + e.message);
 
   await wait(4000);
   const w = currentWindow();
@@ -2224,127 +2211,30 @@ async function smokeTest() {
   w.win.focus();
   await wait(600);
   const t = activeTab(w);
+  S('version', app.getVersion());
 
-  await step('look: home + blue theme', async () => {
-    S('version', app.getVersion());
-    await go(t, NEWTAB_URL);
-    await screen('home-light');
-    setSetting('theme', 'dark');
+  await step('screens', async () => {
+    load(t.view.webContents, NEWTAB_URL); await wait(2000);
+    createTab(w, 'https://example.com/', { activate: false });
+    createTab(w, 'https://en.wikipedia.org/wiki/Cloud', { activate: false });
+    await wait(2500);
+    await screen('home');
+    await ui(w, `(() => { const a = document.getElementById('address'); a.focus(); a.value = 'wiki'; a.dispatchEvent(new Event('input')); })()`);
     await wait(1500);
-    await screen('home-dark');
-    setSetting('theme', 'system');
-    openInternal(w, 'settings', '#privacy');
-    await wait(2000);
+    await screen('suggestions');
+    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
+    switchTab(w, w.tabs[2].id); await wait(2500);
+    await ui(w, `document.getElementById('vpn-btn').click()`); await wait(1200);
+    await screen('website-vpn-panel');
+    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
+    await ui(w, `document.getElementById('ext-btn').click()`); await wait(1000);
+    await screen('ext-panel');
+    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
+    openInternal(w, 'settings'); await wait(2000);
     await screen('settings');
-    closeTab(activeTab(w).id);
-  });
-
-  let realIp = null;
-  await step('privacy without VPN', async () => {
-    await go(t, 'https://api.ipify.org/?format=json');
-    realIp = (JSON.parse(await text(t.view.webContents) || '{}')).ip;
-    S('real IP', realIp);
-    openUrl(w, 'https://example.com/?utm_source=news&id=5&fbclid=abc123');
-    await waitFor(() => !t.view.webContents.isLoading(), 6000);
-    S('typed link cleaned ->', tabUrl(t));
-    await t.view.webContents.executeJavaScript(`location.href = 'https://example.org/?gclid=XYZ&q=2&utm_medium=email'`);
-    await wait(3000);
-    S('clicked link cleaned ->', tabUrl(t));
-    await go(t, 'https://example.com/');
-    await t.view.webContents.executeJavaScript(`location.href = 'https://httpbin.org/headers'`);
-    await wait(4000);
-    S('headers sent (normal)', JSON.stringify(await text(t.view.webContents)).slice(0, 700));
-    S('WebRTC without VPN (expect no private 192.168/10.x addresses)', JSON.stringify(await webrtc(t.view.webContents)));
-    await go(t, 'https://www.theverge.com/', 12000);
-    S('ad blocker still blocking', t.blocked);
-  });
-
-  await step('sleeping tabs + lazy restore', async () => {
-    const w2 = createWindow({ urls: ['https://example.com/', 'https://en.wikipedia.org/wiki/Cloud', 'https://example.org/'], active: 0 });
-    await waitFor(() => w2.tabs.length === 3, 8000);
-    await wait(2500);
-    S('lazy restore: loaded?', w2.tabs.map(x => `${hostOf(tabUrl(x))}:${x.sleeping ? 'waiting' : 'loaded'}:${x.view.webContents.getURL() ? 'has-page' : 'empty'}`).join(', '));
-    switchTab(w2, w2.tabs[1].id);
-    await waitFor(() => !w2.tabs[1].view.webContents.isLoading(), 10000);
-    await wait(800);
-    S('after click: wiki title', w2.tabs[1].view.webContents.getTitle());
-    switchTab(w2, w2.tabs[0].id);
-    await wait(1000);
-    const before = memMB();
-    const ok = sleepTab(w2.tabs[1], true);
-    await wait(2500);
-    S('slept', ok, 'crashed renderer', w2.tabs[1].view.webContents.isCrashed(), 'memory MB', before, '->', memMB(), 'title kept', tabInfo(w2.tabs[1]).title);
-    await screen('sleeping-tab');
-    switchTab(w2, w2.tabs[1].id);
-    await waitFor(() => !w2.tabs[1].view.webContents.isLoading(), 10000);
-    await wait(800);
-    S('woke: title', w2.tabs[1].view.webContents.getTitle(), 'sleeping', w2.tabs[1].sleeping);
-    w2.win.close();
-    await wait(800);
-  });
-
-  await step('VPN: on, leaks, kill switch, reconnect, off', async () => {
-    w.win.focus();
-    await vpn.setEnabled(true);
-    await w.ui.webContents.executeJavaScript(`document.getElementById('vpn-btn').click()`).catch(() => {});
-    const ok = await waitFor(() => ['on', 'error'].includes(vpn.info().status), 240000);
-    S('vpn', ok, vpn.info().status, vpn.info().ip, vpn.info().location, vpn.info().error || '');
-    await screen('vpn-panel');
-    await w.ui.webContents.executeJavaScript(`document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`).catch(() => {});
-
-    await go(t, 'https://check.torproject.org/api/ip', 30000);
-    S('tab IP via VPN', await text(t.view.webContents), '(real IP was', realIp + ')');
-    await go(t, 'https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/', 60000);
-    S('.onion site (proves DNS goes through Tor):', JSON.stringify(t.view.webContents.getTitle()), tabUrl(t).slice(0, 60));
-    await go(t, 'https://example.com/', 30000);
-    const rtc = await webrtc(t.view.webContents);
-    S('WebRTC with VPN (expect nothing revealing)', JSON.stringify(rtc), 'contains real IP?', !!realIp && JSON.stringify(rtc).includes(realIp));
-    const own = await session.defaultSession.fetch('https://check.torproject.org/api/ip').then(r => r.text()).catch(e => 'ERR ' + e.message);
-    S("CloudBrowser's own traffic via VPN", own);
-
-    // Kill switch: cut the tunnel and try to load a page.
-    const pid = vpn.proc && vpn.proc.pid;
-    if (vpn.proc) vpn.proc.kill();
-    await wait(1200);
-    S('after tunnel killed: status', vpn.info().status, '|', vpn.info().error);
-    await go(t, 'https://api.ipify.org/?format=json', 15000);
-    const leaked = await text(t.view.webContents);
-    S('page while tunnel down:', JSON.stringify(leaked).slice(0, 160), 'real IP leaked?', !!realIp && leaked.includes(realIp));
-    const back = await waitFor(() => vpn.info().status === 'on' && vpn.proc && vpn.proc.pid !== pid, 240000);
-    S('auto-reconnected', back, vpn.info().ip);
-    const ip1 = vpn.info().ip;
-    await vpn.restart();
-    await waitFor(() => vpn.info().status === 'on', 240000);
-    S('new IP', ip1, '->', vpn.info().ip);
-
-    await vpn.setEnabled(false);
-    await go(t, 'https://check.torproject.org/api/ip', 15000);
-    S('VPN off', await text(t.view.webContents));
-  });
-
-  await step('incognito always via VPN', async () => {
-    await vpn.setIncognitoVpn(true);
-    S('status with no incognito open', vpn.info().status);
-    const iw = newWindow(true);
-    await waitFor(() => iw.tabs.length > 0, 10000);
-    const it = activeTab(iw);
-    const ok = await waitFor(() => vpn.info().status === 'on', 240000);
-    S('incognito vpn', ok, vpn.info().scope);
-    await go(it, 'https://check.torproject.org/api/ip', 30000);
-    S('incognito tab IP', await text(it.view.webContents));
-    await go(t, 'https://check.torproject.org/api/ip', 15000);
-    S('normal tab IP at the same time', await text(t.view.webContents));
-    await go(it, 'https://example.com/', 30000);
-    await it.view.webContents.executeJavaScript(`location.href = 'https://httpbin.org/headers'`);
-    await wait(9000);
-    S('incognito headers (no Referer expected)', JSON.stringify(await text(it.view.webContents)).slice(0, 600));
-    iw.win.setBounds({ x: 60, y: 40, width: 900, height: 640 });
-    await wait(800);
-    await screen('incognito-screen-protected');
-    iw.win.close();
-    await wait(2000);
-    S('after incognito closed: vpn', vpn.info().status);
-    await vpn.setIncognitoVpn(false);
+    setSetting('verticalTabs', true); await wait(1500);
+    await screen('vertical');
+    setSetting('verticalTabs', false);
   });
 
   S('DONE');

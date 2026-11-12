@@ -1,42 +1,26 @@
 :root {
-  /* CloudBrowser blue (matches the logo) */
-  --strip: #2b67e3;            /* tab strip / title bar */
-  --strip-text: rgba(255,255,255,.86);
-  --strip-hover: rgba(255,255,255,.14);
-  --bar: #ffffff;
-  --tab-active: #ffffff;
-  --text: #17233b;
-  --muted: #5f6f8c;
-  --line: #dbe5f6;
-  --field: #eef4ff;
-  --field-focus: #ffffff;
-  --hover: #e8f0ff;
-  --accent: #2563eb;
-  --private: #6a4fc9;
-  --popup: #ffffff;
-  --popup-shadow: 0 10px 30px rgba(20,50,120,.18), 0 1px 3px rgba(20,50,120,.12);
-  --good: #1f9d55;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --strip: #122347;
-    --strip-text: rgba(225,234,255,.82);
-    --strip-hover: rgba(255,255,255,.08);
-    --bar: #1a2b52;
-    --tab-active: #1a2b52;
-    --text: #e8eefc;
-    --muted: #9fb1d6;
-    --line: #2a3d68;
-    --field: #10203f;
-    --field-focus: #10203f;
-    --hover: #24396a;
-    --accent: #6b9bff;
-    --private: #9b84ee;
-    --popup: #1e3160;
-    --popup-shadow: 0 10px 30px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
-    color-scheme: dark;
-  }
+  /* Discord Lite palette */
+  --strip: #07101b;            /* title bar / tab strip */
+  --strip-text: #9aa7b6;
+  --strip-hover: #141c27;
+  --bar: #07101b;
+  --tab-active: #1d2630;
+  --tab-hover: #141c27;
+  --text: #ffffff;
+  --muted: #9aa7b6;
+  --line: #19212b;
+  --field: #121e2d;
+  --field-border: #323b48;
+  --field-focus: #121e2d;
+  --hover: #141c27;
+  --selected: #1d2630;
+  --surface: #152233;
+  --accent: #4d8dff;
+  --private: #9b84ee;
+  --popup: #0c1624;
+  --popup-shadow: 0 0 0 1px #19212b, 0 12px 32px rgba(0,0,0,.55);
+  --good: #3ba55d;
+  color-scheme: dark;
 }
 /* Incognito windows: always dark purple */
 body.incognito {
@@ -380,3 +364,34 @@ body.panel #backdrop { display: block; }
 .vp-opt small { display: block; color: var(--muted); font-size: 11.5px; }
 .vp-foot .grow { flex: 1; }
 .pill-btn:disabled { opacity: .45; }
+
+/* ---------- Discord Lite look: one-tone navy, pill tabs, white primary buttons ---------- */
+#chrome { border-bottom-color: var(--line); }
+#tabstrip { align-items: center; }
+#tabs { padding-top: 0; gap: 4px; align-items: center; }
+#tabs .tab { height: 30px; border-radius: 8px; box-shadow: none; }
+#tabs .tab.active { background: var(--tab-active); color: #fff; }
+#tabs .tab:hover:not(.active) { background: var(--tab-hover); color: #fff; }
+.tab:not(.active):not(:hover) + .tab:not(.active):not(:hover)::before { display: none; }
+#newtab, #vertical-toggle { margin-bottom: 0 !important; }
+#addressbox { background: var(--field); border: 1.5px solid var(--field-border); border-radius: 8px; }
+#addressbox:focus-within { border-color: var(--accent); background: var(--field); }
+#find-input { background: var(--field); border: 1.5px solid var(--field-border); border-radius: 8px; }
+button.icon { border-radius: 8px; color: var(--muted); }
+button.icon:hover:not(:disabled) { background: var(--hover); color: #fff; }
+.pill-btn { border-color: var(--field-border); border-radius: 8px; }
+.pill-btn.primary, #update { background: #ffffff; border-color: #ffffff; color: #07101b; font-weight: 600; }
+.pill-btn.primary:hover { background: #e6e9ee; }
+.vpn-pill { border-color: var(--field-border); border-radius: 8px; color: var(--muted); }
+.vpn-pill.on { background: #3ba55d; border-color: #3ba55d; }
+#suggestions, #vpn-panel, #ext-panel { border-radius: 10px; }
+.sg.sel, .ep-row:hover, .ep-link:hover { background: var(--selected); }
+#vp-country { background: var(--field); border-color: var(--field-border); }
+.vp-seg button { border-color: var(--field-border); }
+.vp-seg button.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+#vtabs .tab.active { background: var(--selected); }
+#vtabs .tab:hover { background: var(--hover); }
+body.vertical #sidebar { background: var(--bar); border-right-color: var(--line); }
+.side-item:hover { background: var(--hover); color: #fff; }
+.bm:hover { background: var(--hover); }
+.chip { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
