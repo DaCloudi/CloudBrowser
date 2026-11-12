@@ -63,6 +63,8 @@ const PROMPT_PERMISSIONS = {
   openExternal: 'open an app on your computer',
 };
 const AUTO_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'keyboardLock']);
+// Refused without asking (Chrome mostly does the same; asking would just be noise).
+const SILENT_DENY = new Set(['storage-access', 'top-level-storage-access', 'idle-detection']);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'cloud', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -588,8 +590,10 @@ function setupPermissions(sess, isPrivate) {
   sess.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     try {
       if (AUTO_ALLOW.has(permission)) return callback(true);
-      if (!PROMPT_PERMISSIONS[permission]) return callback(false);
+      if (!PROMPT_PERMISSIONS[permission] || SILENT_DENY.has(permission)) return callback(false);
       const origin = originOf(details.requestingUrl || wc.getURL());
+      // Like Chrome, don't let ads and other embedded frames from another site ask.
+      if (details.isMainFrame === false && origin !== originOf(wc.getURL())) return callback(false);
       const key = permissionKey(permission);
       const prior = saved(origin)[key];
       if (prior) return callback(prior === 'allow');
