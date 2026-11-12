@@ -59,6 +59,8 @@ You can also start a release by hand from the repository's **Actions** tab → *
 - Can be set as the Windows default browser, so links and .html files open in it
 - Ad, tracker, cookie-banner and pop-up blocking (also in incognito), with a per-site on/off switch on the shield
 - Built-in VPN: the Tor network (free, choose a country) or your own WireGuard VPN such as Proton VPN's free plan; covers incognito too, with a kill switch and WebRTC leak protection
+- Translate pages (via Google, only when you ask) with "always translate" per language
+- Bitwarden is the default password manager (installed and pinned on first run; Ctrl+Shift+L)
 - Reader mode (F9), screenshots (Ctrl+Shift+S), picture-in-picture, pinned tabs, drag to reorder tabs, "switch to tab" suggestions, zoom badge, paste-and-go, clear data on exit
 - Sites must ask before using your camera, microphone, location or notifications
 - Bookmarks and a bookmarks bar, history, and address-bar suggestions from both

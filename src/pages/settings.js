@@ -127,6 +127,25 @@ $('vpnImport').onclick = async () => renderVpn(await cloud.call('vpn-import'));
 cloud.on('vpn', renderVpn);
 cloud.call('vpn').then(renderVpn);
 
+async function renderPasswords() {
+  const p = await cloud.call('passwords');
+  $('passwordManager').value = p.manager;
+  $('pwOpenRow').hidden = p.manager !== 'bitwarden';
+  $('openBitwarden').textContent = p.installed ? 'Open Bitwarden' : 'Install Bitwarden';
+}
+$('passwordManager').onchange = async e => {
+  if (e.target.value === 'bitwarden') { $('openBitwarden').textContent = 'Installing…'; await cloud.call('install-bitwarden'); }
+  else await set('passwordManager', 'none');
+  renderPasswords();
+};
+$('openBitwarden').onclick = async () => {
+  const p = await cloud.call('passwords');
+  if (!p.installed) { $('openBitwarden').textContent = 'Installing…'; await cloud.call('install-bitwarden'); renderPasswords(); return; }
+  cloud.call('open-bitwarden');
+};
+cloud.on('extensions', () => renderPasswords());
+renderPasswords();
+
 $('sleepAfter').onchange = e => set('sleepAfter', Number(e.target.value));
 $('incognitoVpn').onchange = async e => renderVpn(await cloud.call('vpn-incognito', e.target.checked));
 for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation', 'clearOnExit', 'stripTracking', 'sendGpc', 'incognitoScreenProtection']) {

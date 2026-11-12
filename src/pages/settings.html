@@ -46,6 +46,15 @@
         <input type="checkbox" class="switch" id="showBookmarksBar"></label>
     </section>
 
+    <section id="passwords">
+      <h2>Passwords</h2>
+      <div class="row"><div><div class="label">Password manager</div>
+        <div class="hint" id="pwStatus">Bitwarden saves and fills your passwords, and keeps them in sync on your phone and other computers. It’s free and open source.</div></div>
+        <select id="passwordManager"><option value="bitwarden">Bitwarden (recommended)</option><option value="none">None</option></select></div>
+      <div class="row" id="pwOpenRow"><div><div class="label">Open Bitwarden</div><div class="hint">Shortcut: Ctrl+Shift+L. Bitwarden isn’t available in incognito windows.</div></div>
+        <button id="openBitwarden" class="btn primary">Open Bitwarden</button></div>
+    </section>
+
     <section id="vpn">
       <h2>VPN</h2>
       <label class="row"><div><div class="label">Use CloudBrowser VPN</div><div class="hint" id="vpnStatus"></div></div>

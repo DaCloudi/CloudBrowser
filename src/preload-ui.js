@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('cloud', {
   setPageRect: r => send('page-rect', r),
   toggleVertical: () => send('toggle-vertical'),
   shieldMenu: () => send('shield-menu'),
+  translateMenu: () => send('translate-menu'),
+  onOpenExtension: cb => on('open-extension', cb),
   extensionList: () => ipcRenderer.invoke('ui:extensions'),
   pinExtension: id => send('pin-extension', id),
   manageExtensions: () => send('manage-extensions'),

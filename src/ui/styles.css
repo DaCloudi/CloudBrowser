@@ -395,3 +395,7 @@ body.vertical #sidebar { background: var(--bar); border-right-color: var(--line)
 .side-item:hover { background: var(--hover); color: #fff; }
 .bm:hover { background: var(--hover); }
 .chip { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+
+#translate-btn { display: none; }
+#translate-btn.show { display: grid; }
+#translate-btn.on svg { color: var(--accent); }

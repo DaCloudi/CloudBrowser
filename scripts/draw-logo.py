@@ -13,7 +13,7 @@ def gradient(size, c1, c2, direction='diag'):
     return g
 
 # --- background squircle with sky gradient
-small = gradient((256, 256), (110, 205, 255, 255), (37, 84, 228, 255))
+small = gradient((256, 256), (30, 32, 38, 255), (0, 0, 0, 255))  # black background
 bg = small.resize((S, S), Image.BICUBIC)
 mask = Image.new('L', (S, S), 0)
 ImageDraw.Draw(mask).rounded_rectangle([64, 64, S - 64, S - 64], radius=470, fill=255)
@@ -22,7 +22,7 @@ img.paste(bg, (0, 0), mask)
 
 # soft highlight top-left
 hl = Image.new('L', (S, S), 0)
-ImageDraw.Draw(hl).ellipse([-500, -700, 1500, 900], fill=90)
+ImageDraw.Draw(hl).ellipse([-500, -700, 1500, 900], fill=28)
 hl = hl.filter(ImageFilter.GaussianBlur(220))
 hl = ImageChops.multiply(hl, mask)
 img.alpha_composite(Image.merge('RGBA', [Image.new('L', (S, S), 255)] * 3 + [hl]))

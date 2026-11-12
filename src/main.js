@@ -81,12 +81,17 @@ const DEFAULT_SETTINGS = {
   sendGpc: true,                // tell sites "do not sell or share my data" (Sec-GPC, DNT)
   incognitoVpn: false,          // incognito windows always go through the VPN
   incognitoScreenProtection: true, // hide incognito windows from screenshots/recordings
+  passwordManager: 'bitwarden', // bitwarden | none
+  bitwardenSetupDone: false,    // installed + pinned once (don't redo it if the user removes it)
+  alwaysTranslate: [],          // language codes translated automatically
+  neverTranslate: [],           // language codes never offered
   clearOnExit: false,
   shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
   window: null,               // { width, height, maximized }
 };
 const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
-  'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn']);
+  'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn',
+  'bitwardenSetupDone', 'alwaysTranslate', 'neverTranslate']);
 
 // Shown on the home page until there's enough history to replace them.
 const DEFAULT_SITES = [
@@ -296,6 +301,8 @@ function tabInfo(t) {
     readerable: !!t.readerable,
     zoom: Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100),
     adblockOff: isAllowlisted(hostOf(url)),
+    translatable: canTranslate(t),
+    translated: isTranslated(url),
   };
 }
 
@@ -511,7 +518,7 @@ function wireTab(tab) {
   const update = () => sendState(tab.w);
 
   wc.on('did-start-loading', update);
-  wc.on('did-stop-loading', () => { update(); saveSession(); checkReaderable(tab); });
+  wc.on('did-stop-loading', () => { update(); saveSession(); checkReaderable(tab); detectLanguage(tab); });
   wc.on('audio-state-changed', update);
   wc.on('page-title-updated', (_e, title) => {
     if (tab.histEntry && tab.histEntry.url === wc.getURL()) { tab.histEntry.title = title; history.save(); }
@@ -519,6 +526,7 @@ function wireTab(tab) {
   });
   wc.on('did-navigate', (_e, url) => {
     tab.readerable = false;
+    tab.pageLang = null;
     if (!url.startsWith('data:')) tab.failedUrl = null;
     tab.blocked = 0;
     tab.favicon = null;
@@ -1352,6 +1360,7 @@ async function installExtension(id) {
 
 async function removeExtension(id) {
   const s = extSession();
+  if (id === BITWARDEN_ID) { settings.data.passwordManager = 'none'; settings.save(); pagesSend('page:settings', settings.data); }
   try {
     if (webStoreLib && webStoreLib.uninstallExtension) await webStoreLib.uninstallExtension(id, { session: s });
     else s.extensions.removeExtension(id);
@@ -1461,6 +1470,132 @@ function setupPrivacyHeaders() {
   }
 }
 
+// ---------- translate pages ----------
+// Uses Google's "translate this page" service (the page is fetched through translate.goog).
+// Only happens when you ask for it, or for languages you chose to always translate.
+
+function userLanguage() {
+  const l = (app.getPreferredSystemLanguages && app.getPreferredSystemLanguages()[0]) || app.getLocale() || 'en';
+  return l.toLowerCase().split(/[-_]/)[0];
+}
+function languageName(code) {
+  try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch { return code; }
+}
+const TRANSLATE_TARGETS = ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'tr', 'ru', 'uk', 'ar', 'hi', 'zh-CN', 'ja', 'ko'];
+
+function isTranslated(url) { try { return new URL(url).hostname.endsWith('.translate.goog'); } catch { return false; } }
+
+function canTranslate(t) {
+  const url = tabUrl(t);
+  if (!t.pageLang || isTranslated(url) || !/^https:/.test(url)) return false;
+  return t.pageLang !== userLanguage() && !(settings.data.neverTranslate || []).includes(t.pageLang);
+}
+
+async function detectLanguage(tab) {
+  const wc = tab.view.webContents;
+  if (wc.isDestroyed() || !/^https:/.test(wc.getURL()) || isTranslated(wc.getURL())) return;
+  try {
+    const lang = await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: `(document.documentElement.lang || (document.querySelector('meta[http-equiv="content-language" i]') || {}).content || '').trim()` }]);
+    const base = String(lang || '').toLowerCase().split(/[-_,\s]/)[0];
+    tab.pageLang = /^[a-z]{2,3}$/.test(base) ? base : null;
+    sendState(tab.w);
+    if (tab.pageLang && canTranslate(tab) && (settings.data.alwaysTranslate || []).includes(tab.pageLang)) translateTab(tab);
+  } catch {}
+}
+
+function translatedUrl(url, target) {
+  const u = new URL(url);
+  const host = u.hostname.replace(/-/g, '--').replace(/\./g, '-');
+  const q = new URLSearchParams(u.search);
+  q.set('_x_tr_sl', 'auto'); q.set('_x_tr_tl', target); q.set('_x_tr_hl', target); q.set('_x_tr_pto', 'wapp');
+  return `https://${host}.translate.goog${u.pathname}?${q.toString()}${u.hash}`;
+}
+
+function originalUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith('.translate.goog')) return url;
+    const host = u.hostname.slice(0, -'.translate.goog'.length).replace(/--/g, '\u0000').replace(/-/g, '.').replace(/\u0000/g, '-');
+    const q = new URLSearchParams(u.search);
+    for (const k of [...q.keys()]) if (k.startsWith('_x_tr_')) q.delete(k);
+    const qs = q.toString();
+    return `https://${host}${u.pathname}${qs ? '?' + qs : ''}${u.hash}`;
+  } catch { return url; }
+}
+
+function translateTab(tab, target = userLanguage()) {
+  const url = tabUrl(tab);
+  if (!/^https:/.test(url)) return;
+  const base = isTranslated(url) ? originalUrl(url) : url;
+  load(tab.view.webContents, translatedUrl(base, target));
+}
+
+function showTranslateMenu(w) {
+  const t = activeTab(w);
+  if (!t) return;
+  const url = tabUrl(t);
+  const mine = userLanguage();
+  const lang = t.pageLang;
+  const items = [];
+  if (isTranslated(url)) {
+    items.push({ label: 'Show original', click: () => load(t.view.webContents, originalUrl(url)) });
+  } else {
+    items.push({ label: `Translate to ${languageName(mine)}`, click: () => translateTab(t, mine) });
+  }
+  items.push({ label: 'Translate to…', submenu: TRANSLATE_TARGETS.filter(c => c !== mine).map(c => ({ label: languageName(c), click: () => translateTab(t, c) })) });
+  if (lang && lang !== mine) {
+    const always = (settings.data.alwaysTranslate || []).includes(lang);
+    const never = (settings.data.neverTranslate || []).includes(lang);
+    items.push({ type: 'separator' });
+    items.push({ label: `Always translate ${languageName(lang)}`, type: 'checkbox', checked: always, click: () => {
+      settings.data.alwaysTranslate = always ? settings.data.alwaysTranslate.filter(x => x !== lang) : [...(settings.data.alwaysTranslate || []), lang];
+      settings.data.neverTranslate = (settings.data.neverTranslate || []).filter(x => x !== lang);
+      settings.save();
+      if (!always && !isTranslated(url)) translateTab(t, mine);
+    } });
+    items.push({ label: `Never offer for ${languageName(lang)}`, type: 'checkbox', checked: never, click: () => {
+      settings.data.neverTranslate = never ? settings.data.neverTranslate.filter(x => x !== lang) : [...(settings.data.neverTranslate || []), lang];
+      settings.data.alwaysTranslate = (settings.data.alwaysTranslate || []).filter(x => x !== lang);
+      settings.save();
+      sendStateAll();
+    } });
+  }
+  items.push({ type: 'separator' }, { label: 'Translated by Google', enabled: false });
+  Menu.buildFromTemplate(items).popup({ window: w.win });
+}
+
+// ---------- Bitwarden: the default password manager ----------
+
+const BITWARDEN_ID = 'nngceckbapebfimnlniiiahkandclblb';
+
+function bitwardenInstalled() {
+  try { return !!extSession().extensions.getExtension(BITWARDEN_ID); } catch { return false; }
+}
+
+// Install and pin Bitwarden the first time (or when chosen in Settings).
+async function ensureBitwarden(force = false) {
+  if (!extensions || !webStoreLib || settings.data.passwordManager !== 'bitwarden') return;
+  if (settings.data.bitwardenSetupDone && !force) return;
+  if (!bitwardenInstalled()) {
+    const res = await installExtension(BITWARDEN_ID);
+    if (!res.ok) { log('Bitwarden install failed:', res.error); return; }
+  }
+  const pins = settings.data.pinnedExtensions || [];
+  if (!pins.includes(BITWARDEN_ID)) settings.data.pinnedExtensions = [BITWARDEN_ID, ...pins];
+  settings.data.bitwardenSetupDone = true;
+  settings.save();
+  sendStateAll();
+  pagesSend('page:settings', settings.data);
+  log('Bitwarden ready');
+}
+
+function openBitwarden(w) {
+  if (!w || w.incognito) w = normalWindow();
+  if (!bitwardenInstalled()) { openInternal(w, 'settings', '#passwords'); return; }
+  w.win.focus();
+  uiSend(w, 'open-extension', BITWARDEN_ID);
+}
+
 // ---------- sleeping tabs ----------
 
 function wakeTab(t) {
@@ -1553,6 +1688,7 @@ function handleShortcut(w, input) {
   if (key === 'f3') { uiSend(w, 'find-next', { forward: !shift }); return true; }
   if (key === 'f9') { if (t && t.readerable) openReader(t); return true; }
   if (ctrl && shift && key === 's') { screenshot(w); return true; }
+  if (ctrl && shift && key === 'l') { openBitwarden(w); return true; }
   if (input.alt && key === 'arrowleft') { wc && wc.navigationHistory.goBack(); return true; }
   if (input.alt && key === 'arrowright') { wc && wc.navigationHistory.goForward(); return true; }
   if (input.alt && key === 'home') { wc && load(wc, homeUrl()); return true; }
@@ -1637,6 +1773,9 @@ function showContextMenu(tab, p) {
     t.push({ label: 'Print…', click: () => wc.print() });
     t.push({ label: 'Take screenshot', click: () => screenshot(w) });
     if (tab.readerable) t.push({ label: 'Open in reader mode', click: () => openReader(tab) });
+    if (/^https:/.test(tabUrl(tab))) t.push(isTranslated(tabUrl(tab))
+      ? { label: 'Show original (untranslated)', click: () => load(wc, originalUrl(tabUrl(tab))) }
+      : { label: `Translate to ${languageName(userLanguage())}`, click: () => translateTab(tab) });
     t.push({ label: 'View page source', enabled: /^https?:/.test(tabUrl(tab)), click: () => createTab(w, 'view-source:' + tabUrl(tab), { openerId: tab.id }) });
     sep();
   }
@@ -1673,6 +1812,7 @@ function showMainMenu(w) {
     { label: 'Downloads', accelerator: 'Ctrl+J', click: () => openInternal(w, 'downloads') },
     { label: 'Bookmarks', accelerator: 'Ctrl+Shift+O', click: () => openInternal(w, 'bookmarks') },
     { label: 'Extensions', click: () => openInternal(w, 'extensions') },
+    { label: 'Passwords (Bitwarden)', accelerator: 'Ctrl+Shift+L', click: () => openBitwarden(w) },
     { label: 'Vertical tabs', type: 'checkbox', checked: settings.data.verticalTabs, click: () => setSetting('verticalTabs', !settings.data.verticalTabs) },
     { label: 'Show bookmarks bar', type: 'checkbox', checked: settings.data.showBookmarksBar, accelerator: 'Ctrl+Shift+B',
       click: () => setSetting('showBookmarksBar', !settings.data.showBookmarksBar) },
@@ -1683,6 +1823,7 @@ function showMainMenu(w) {
       { label: 'Reset', accelerator: 'Ctrl+0', click: () => zoom(wc, 0) },
     ] },
     { label: 'Find on page…', accelerator: 'Ctrl+F', click: () => { uiSend(w, 'find-open'); w.ui.webContents.focus(); } },
+    { label: 'Translate page…', enabled: !!(t && /^https:/.test(tabUrl(t))), click: () => showTranslateMenu(w) },
     { label: 'Reader mode', accelerator: 'F9', enabled: !!(t && t.readerable), click: () => openReader(t) },
     { label: 'Take screenshot', accelerator: 'Ctrl+Shift+S', enabled: !!wc, click: () => screenshot(w) },
     { label: 'Picture in picture', enabled: !!wc, click: () => pictureInPicture(wc) },
@@ -1757,6 +1898,7 @@ function setSetting(key, value) {
   if (key === 'theme' && !['system', 'light', 'dark'].includes(value)) return false;
   if (key === 'shortcutsMode' && !['mostVisited', 'custom'].includes(value)) return false;
   if (key === 'sleepAfter' && ![0, 5, 15, 30, 60, 120].includes(value)) return false;
+  if (key === 'passwordManager' && !['bitwarden', 'none'].includes(value)) return false;
   if (key === 'shortcutsMode' && value === 'custom' && !settings.data.shortcuts.length) {
     settings.data.shortcuts = topSites().map(x => ({ title: x.title, url: x.url })); // start from what's showing now
   }
@@ -1765,6 +1907,7 @@ function setSetting(key, value) {
   settings.save();
   if (key === 'theme') nativeTheme.themeSource = value;
   if (key === 'adblock') applyAdblock();
+  if (key === 'passwordManager' && value === 'bitwarden') ensureBitwarden(true);
   if (key === 'incognitoScreenProtection') for (const x of windows) if (x.incognito) x.win.setContentProtection(value);
   sendStateAll();
   pagesSend('page:settings', settings.data);
@@ -1875,6 +2018,7 @@ uiOn('store-install', async (w, id) => {
 });
 uiOn('store-remove', async (w, id) => { await removeExtension(id); sendStateAll(); });
 uiOn('shield-menu', w => showShieldMenu(w));
+uiOn('translate-menu', w => showTranslateMenu(w));
 uiOn('pin-extension', (_w, id) => {
   const list = settings.data.pinnedExtensions || [];
   settings.data.pinnedExtensions = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
@@ -2049,6 +2193,9 @@ pageHandle('install-update', () => { autoUpdater && autoUpdater.quitAndInstall()
 pageHandle('open-downloads-folder', () => { shell.openPath(app.getPath('downloads')); return true; });
 pageHandle('make-default', async () => { await makeDefaultBrowser(); return true; });
 pageHandle('extensions', () => listExtensions());
+pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
+pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });
+pageHandle('install-bitwarden', async () => { settings.data.passwordManager = 'bitwarden'; settings.save(); await ensureBitwarden(true); return bitwardenInstalled(); });
 pageHandle('reader-article', (_ctx, id) => readerCache.get(Number(id)) || null);
 pageHandle('vpn', () => (vpn ? vpn.info() : null));
 pageHandle('vpn-toggle', async () => { if (vpn) await vpn.setEnabled(!settings.data.vpnEnabled); return vpn.info(); });
@@ -2141,6 +2288,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
 
     await setupExtensions();
     startWindows(argUrl(process.argv));
+    setTimeout(() => ensureBitwarden().catch(e => log('Bitwarden setup error', e.message)), 3000);
     setupUpdater();
     setupAdblock();
     registerAsBrowser().then(() => checkDefaultBrowser(true));
@@ -2213,28 +2361,37 @@ async function smokeTest() {
   const t = activeTab(w);
   S('version', app.getVersion());
 
-  await step('screens', async () => {
-    load(t.view.webContents, NEWTAB_URL); await wait(2000);
-    createTab(w, 'https://example.com/', { activate: false });
-    createTab(w, 'https://en.wikipedia.org/wiki/Cloud', { activate: false });
+  const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
+
+  await step('bitwarden default', async () => {
+    const ok = await waitFor(() => bitwardenInstalled() && settings.data.bitwardenSetupDone, 90000);
+    S('bitwarden auto-installed', ok, 'pinned', (settings.data.pinnedExtensions || []).includes(BITWARDEN_ID), 'manager', settings.data.passwordManager, 'user language', userLanguage());
+    await wait(2000);
+    openBitwarden(w);
+    await wait(4000);
+    await screen('bitwarden-shortcut');
+    w.win.focus();
+    await wait(800);
+  });
+
+  await step('translate', async () => {
+    load(t.view.webContents, 'https://www.lemonde.fr/');
+    await waitFor(() => !t.view.webContents.isLoading(), 20000);
     await wait(2500);
+    S('page language', t.pageLang, 'translatable', tabInfo(t).translatable, 'title', t.view.webContents.getTitle());
+    await screen('french-page');
+    translateTab(t);
+    await waitFor(() => isTranslated(tabUrl(t)) && !t.view.webContents.isLoading(), 30000);
+    await wait(4000);
+    S('translated url', tabUrl(t).slice(0, 120), 'title', t.view.webContents.getTitle(), 'back to original ->', originalUrl(tabUrl(t)).slice(0, 80));
+    await screen('translated');
+    S('url round trip', originalUrl(translatedUrl('https://sub-domain.example.co.uk/a/b?x=1#h', 'en')));
+  });
+
+  await step('home + logo', async () => {
+    load(t.view.webContents, NEWTAB_URL);
+    await wait(2000);
     await screen('home');
-    await ui(w, `(() => { const a = document.getElementById('address'); a.focus(); a.value = 'wiki'; a.dispatchEvent(new Event('input')); })()`);
-    await wait(1500);
-    await screen('suggestions');
-    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
-    switchTab(w, w.tabs[2].id); await wait(2500);
-    await ui(w, `document.getElementById('vpn-btn').click()`); await wait(1200);
-    await screen('website-vpn-panel');
-    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
-    await ui(w, `document.getElementById('ext-btn').click()`); await wait(1000);
-    await screen('ext-panel');
-    await ui(w, `document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`);
-    openInternal(w, 'settings'); await wait(2000);
-    await screen('settings');
-    setSetting('verticalTabs', true); await wait(1500);
-    await screen('vertical');
-    setSetting('verticalTabs', false);
   });
 
   S('DONE');
