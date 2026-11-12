@@ -43,10 +43,25 @@
         <input type="checkbox" class="switch" id="showBookmarksBar"></label>
     </section>
 
+    <section id="vpn">
+      <h2>VPN</h2>
+      <label class="row"><div><div class="label">Use CloudBrowser VPN</div><div class="hint" id="vpnStatus"></div></div>
+        <input type="checkbox" class="switch" id="vpnEnabled"></label>
+      <div class="row"><div><div class="label">Connect through</div><div class="hint">Tor is free and needs no account. “My VPN” uses a WireGuard config from your VPN provider (Proton VPN has a free plan).</div></div>
+        <select id="vpnMode"><option value="tor">Tor network</option><option value="wireguard">My VPN (WireGuard)</option></select></div>
+      <div class="row" id="vpnCountryRow"><div><div class="label">Location</div></div><select id="vpnCountry"></select></div>
+      <div class="row" id="vpnWgRow"><div><div class="label">WireGuard config</div><div class="hint" id="vpnWgName"></div></div>
+        <button id="vpnImport" class="btn">Import config…</button></div>
+    </section>
+
     <section id="privacy">
       <h2>Privacy &amp; security</h2>
       <label class="row"><div><div class="label">Block ads and trackers</div><div class="hint" id="adblockHint"></div></div>
         <input type="checkbox" class="switch" id="adblock"></label>
+
+      <h3>Sites where ads are allowed</h3>
+      <p class="hint">Turn blocking off for a site from the shield button in the toolbar.</p>
+      <div id="allowlist" class="list"></div>
 
       <h3>Site permissions</h3>
       <p class="hint">Sites must ask before using your camera, microphone, location or notifications. Your answers are listed here.</p>
@@ -61,6 +76,9 @@
         <label><input type="checkbox" id="c-permissions"> Site permissions</label>
       </div>
       <button id="clear" class="btn danger">Clear data</button> <span id="clearDone" class="hint"></span>
+      <label class="row" style="margin-top:14px"><div><div class="label">Clear history, cookies and cache when CloudBrowser closes</div>
+        <div class="hint">Your tabs, bookmarks and passwords in extensions are kept.</div></div>
+        <input type="checkbox" class="switch" id="clearOnExit"></label>
     </section>
 
     <section id="downloads-settings">

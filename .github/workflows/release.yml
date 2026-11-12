@@ -43,6 +43,12 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: npm install
 
+      - name: Download Tor and wireproxy for the built-in VPN
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/fetch-vendor.mjs
+
       - name: Build installer
         if: steps.check.outputs.skip != 'true'
         run: npx electron-builder --win --publish never

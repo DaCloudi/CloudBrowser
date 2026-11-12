@@ -1,0 +1,33 @@
+:root { --bg: #fbfbf8; --text: #1d1d1f; --muted: #6e6e73; --link: #2f6fd6; --line: #e5e5e5; --size: 20px; --font: Georgia, "Iowan Old Style", "Palatino Linotype", serif; }
+body.sepia { --bg: #f5ecd9; --text: #4a3b2a; --muted: #87745b; --link: #93531f; --line: #e3d6bb; }
+body.dark { --bg: #1b1d22; --text: #dcdfe5; --muted: #8b919c; --link: #79a8f5; --line: #30343c; }
+body.sans { --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); transition: background .2s, color .2s; }
+#bar {
+  position: sticky; top: 0; display: flex; align-items: center; gap: 6px; padding: 10px 20px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  font: 14px "Segoe UI", system-ui, sans-serif; z-index: 2;
+}
+#bar a { color: var(--link); text-decoration: none; }
+.grow { flex: 1; }
+#bar button {
+  height: 30px; min-width: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: transparent; color: var(--text); font: inherit; cursor: pointer;
+}
+#bar button.sw { width: 30px; min-width: 30px; padding: 0; border-radius: 50%; }
+.sw.light { background: #fbfbf8 !important; } .sw.sepia { background: #f5ecd9 !important; } .sw.dark { background: #1b1d22 !important; }
+#bar button.sel { outline: 2px solid var(--link); outline-offset: 1px; }
+article { max-width: 700px; margin: 0 auto; padding: 40px 24px 120px; font: var(--size)/1.7 var(--font); }
+#site { color: var(--muted); font: 600 13px "Segoe UI", system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em; }
+h1 { font-size: 1.9em; line-height: 1.2; margin: .3em 0 .3em; }
+#meta { color: var(--muted); font: 14px "Segoe UI", system-ui, sans-serif; margin-bottom: 2em; padding-bottom: 1.2em; border-bottom: 1px solid var(--line); }
+#content img, #content video, #content figure { max-width: 100%; height: auto; border-radius: 6px; }
+#content figure { margin: 1.5em 0; }
+#content figcaption { color: var(--muted); font-size: .8em; }
+#content a { color: var(--link); }
+#content pre, #content code { font-family: Consolas, monospace; font-size: .85em; background: color-mix(in srgb, var(--text) 7%, transparent); border-radius: 4px; }
+#content pre { padding: 12px; overflow-x: auto; }
+#content blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid var(--line); color: var(--muted); }
+#content table { border-collapse: collapse; font-size: .85em; }
+#content td, #content th { border: 1px solid var(--line); padding: 4px 8px; }

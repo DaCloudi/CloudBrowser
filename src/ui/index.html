@@ -42,11 +42,17 @@
           <svg class="cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-7.97A5.5 5.5 0 0 0 7 9.5 4.25 4.25 0 0 0 7 18z"/></svg>
         </span>
         <input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address">
+        <button id="zoom-badge" class="chip" title="Reset zoom"></button>
+        <button id="reader-btn" class="icon small" title="Reader mode (F9)">
+          <svg viewBox="0 0 24 24"><path d="M4 5.5h6a2 2 0 0 1 2 2V19a1.5 1.5 0 0 0-1.5-1.5H4zM20 5.5h-6a2 2 0 0 0-2 2V19a1.5 1.5 0 0 1 1.5-1.5H20z"/></svg></button>
         <button id="star" class="icon small" title="Bookmark this page (Ctrl+D)">
           <svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg></button>
       </div>
 
       <span id="actions-slot"></span>
+      <button id="vpn-btn" class="vpn-pill" title="CloudBrowser VPN">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>
+        <span id="vpn-label">VPN</span></button>
       <button id="shield" class="icon" title="Ad & tracker blocking">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/></svg>
         <span id="shield-count"></span></button>
@@ -99,6 +105,38 @@
   </aside>
 
   <div id="backdrop"></div>
+
+  <div id="vpn-panel" hidden>
+    <div class="vp-head">
+      <div>
+        <div class="vp-title">CloudBrowser VPN</div>
+        <div id="vp-status" class="vp-status"></div>
+      </div>
+      <label class="switch-wrap"><input type="checkbox" id="vp-toggle" class="switch"></label>
+    </div>
+    <div id="vp-progress" class="vp-progress"><div></div></div>
+
+    <div class="vp-seg">
+      <button data-mode="tor">Tor network <small>free, no account</small></button>
+      <button data-mode="wireguard">My VPN <small>Proton, WireGuard</small></button>
+    </div>
+
+    <div id="vp-tor">
+      <label class="vp-label" for="vp-country">Location</label>
+      <select id="vp-country"></select>
+      <p class="vp-note">Tor is slower than a paid VPN, and some sites (like Google) may ask you to prove you’re not a robot.</p>
+    </div>
+
+    <div id="vp-wg" hidden>
+      <div class="vp-row"><span id="vp-wg-file">No config imported yet</span><button id="vp-import" class="pill-btn">Import config…</button></div>
+      <p class="vp-note">Free with Proton VPN: sign in at <b>account.protonvpn.com</b> → Downloads → WireGuard configuration, pick a free server, download the .conf file and import it here.</p>
+    </div>
+
+    <div class="vp-foot">
+      <span class="vp-note">Covers every window, including incognito.</span>
+      <button id="vp-check" class="pill-btn">Check my IP</button>
+    </div>
+  </div>
   <div id="suggestions"></div>
 
   <script src="renderer.js"></script>

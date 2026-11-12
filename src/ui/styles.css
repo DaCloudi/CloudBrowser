@@ -263,3 +263,75 @@ body.collapsed #side-collapse svg { transform: rotate(180deg); }
 #storebar[hidden] { display: none; }
 #storebar svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
 #storebar span { flex: 1; min-width: 0; }
+
+/* ---------- address bar extras ---------- */
+.chip {
+  display: none; height: 24px; padding: 0 8px; border: 0; border-radius: 12px; flex: none;
+  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 12px; font-weight: 600;
+}
+.chip.show { display: block; }
+#reader-btn { display: none; }
+#reader-btn.show { display: grid; }
+#reader-btn.show svg { color: var(--accent); }
+#shield.allowlisted { color: var(--muted); }
+#shield.allowlisted svg { stroke-dasharray: 3 2; }
+
+/* ---------- VPN ---------- */
+.vpn-pill {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 9px; margin: 0 3px;
+  border: 1.5px solid var(--line); border-radius: 15px; background: transparent; color: var(--muted); font-weight: 600; flex: none;
+}
+.vpn-pill:hover { background: var(--hover); }
+.vpn-pill svg { width: 16px; height: 16px; }
+.vpn-pill.on { background: #1f9d55; border-color: #1f9d55; color: #fff; }
+.vpn-pill.connecting { border-color: var(--accent); color: var(--accent); }
+.vpn-pill.connecting svg { animation: spin 1.6s linear infinite; }
+.vpn-pill.error { border-color: #d64545; color: #d64545; }
+
+#vpn-panel {
+  position: fixed; z-index: 20; width: 360px; padding: 16px; border-radius: 16px;
+  background: var(--popup); box-shadow: var(--popup-shadow); color: var(--text);
+}
+#vpn-panel[hidden] { display: none; }
+.vp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vp-title { font-size: 15px; font-weight: 600; }
+.vp-status { color: var(--muted); margin-top: 2px; font-size: 12.5px; }
+.vp-status.on { color: #1f9d55; }
+.vp-status.error { color: #d64545; }
+.vp-progress { height: 4px; border-radius: 2px; background: var(--line); margin: 12px 0 4px; overflow: hidden; display: none; }
+.vp-progress.show { display: block; }
+.vp-progress div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.vp-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 14px 0 12px; }
+.vp-seg button {
+  padding: 8px 10px; border-radius: 10px; border: 1.5px solid var(--line); background: transparent; color: var(--text);
+  text-align: left; font-weight: 600;
+}
+.vp-seg button small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+.vp-seg button.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.vp-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+#vp-country {
+  width: 100%; height: 34px; padding: 0 10px; border-radius: 9px; border: 1.5px solid var(--line);
+  background: var(--field); color: var(--text); font: inherit;
+}
+.vp-note { color: var(--muted); font-size: 12px; margin: 8px 0 0; line-height: 1.4; }
+.vp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vp-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+input.switch {
+  appearance: none; width: 42px; height: 24px; border-radius: 12px; background: var(--line); position: relative; cursor: pointer; margin: 0;
+}
+input.switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+input.switch:checked { background: #1f9d55; }
+input.switch:checked::after { transform: translateX(18px); }
+body.panel #backdrop { display: block; }
+
+/* ---------- pinned tabs & dragging ---------- */
+#tabs .tab.pinned { flex: 0 0 44px; width: 44px; min-width: 44px; padding: 0; justify-content: center; }
+#tabs .tab.pinned .title, #tabs .tab.pinned .close, #tabs .tab.pinned .audio { display: none; }
+.tab .pin { width: 12px; height: 12px; flex: none; color: var(--muted); }
+#tabs .tab.pinned .pin { display: none; }
+.tab.dragging { opacity: .45; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+#vtabs .tab.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+#vtabs .tab.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }

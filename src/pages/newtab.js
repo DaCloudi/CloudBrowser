@@ -179,6 +179,7 @@ async function load() {
   info = await cloud.call('newtab');
   sites = info.sites;
   document.body.classList.toggle('incognito', info.incognito);
+  if (window.CloudSky) window.CloudSky.refresh();
   document.title = info.incognito ? 'New incognito tab' : 'New tab';
   $('q').placeholder = `Search ${info.engineName} or type a web address`;
   if (info.incognito) {

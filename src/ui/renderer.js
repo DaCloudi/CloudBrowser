@@ -14,6 +14,8 @@ const ICONS = {
   close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   sound: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
   muted: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
+  tab: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M3.5 9.5h17"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3H7l3-3zM12 12v8"/></svg>',
 };
 
 // ---------- toolbar buttons ----------
@@ -29,7 +31,11 @@ if (new URLSearchParams(location.search).get('incognito') === '1') document.body
 $('menu').onclick = () => cloud.menu();
 $('update').onclick = () => cloud.installUpdate();
 $('star').onclick = () => cloud.toggleBookmark();
-$('shield').onclick = () => cloud.openInternal('settings', '#privacy');
+$('shield').onclick = () => cloud.shieldMenu();
+$('reader-btn').onclick = () => cloud.reader();
+$('zoom-badge').onclick = () => cloud.resetZoom();
+address.addEventListener('contextmenu', e => { e.preventDefault(); cloud.addressMenu(address.selectionStart !== address.selectionEnd); });
+cloud.onBlurAddress(() => { editing = false; address.blur(); });
 $('downloads').onclick = () => cloud.openInternal('downloads');
 $('reload').onclick = () => { const t = activeTab(); t && t.loading ? cloud.stop() : cloud.reload(); };
 for (const id of ['back', 'forward']) {
@@ -156,6 +162,7 @@ async function updateSuggestions() {
   if (looksLikeUrl(typed)) rows.push({ icon: 'globe', title: typed, sub: '', text: typed });
   rows.push({ icon: 'search', title: typed, sub: `${engine} search`, text: typed, search: true });
   for (const it of items) {
+    if (it.type === 'tab') { rows.push({ icon: 'tab', title: it.title || it.url, sub: 'Switch to this tab', url: it.url, tabId: it.tabId }); continue; }
     rows.push({ icon: it.type === 'bookmark' ? 'star' : 'clock', title: it.title || it.url, sub: it.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''), url: it.url });
   }
   sel = 0;
@@ -166,6 +173,7 @@ async function updateSuggestions() {
 function go(row, newTab) {
   const target = row ? (row.url || row.text) : address.value;
   closeOverlay();
+  if (row && row.tabId && !newTab) { editing = false; address.blur(); cloud.focusTab(row.tabId); return; }
   editing = false;
   if (row && row.search) cloud.search(target, newTab);
   else cloud.navigate(target, newTab);
@@ -191,7 +199,73 @@ address.addEventListener('keydown', e => {
     else { editing = false; address.blur(); render(); cloud.focusPage(); }
   }
 });
-$('backdrop').addEventListener('mousedown', e => { e.preventDefault(); closeOverlay(); address.blur(); cloud.focusPage(); });
+$('backdrop').addEventListener('mousedown', e => {
+  e.preventDefault();
+  if (document.body.classList.contains('panel')) { closeVpnPanel(); return; }
+  closeOverlay(); address.blur(); cloud.focusPage();
+});
+
+// ---------- VPN panel ----------
+
+let vpnInfo = null;
+function openVpnPanel() {
+  const r = $('vpn-btn').getBoundingClientRect();
+  const panel = $('vpn-panel');
+  panel.hidden = false;
+  panel.style.top = (r.bottom + 8) + 'px';
+  panel.style.left = Math.max(8, Math.min(window.innerWidth - 368, r.right - 360)) + 'px';
+  document.body.classList.add('panel');
+  cloud.setOverlay(true);
+  cloud.vpnInfo().then(i => { if (i) { vpnInfo = i; renderVpn(); } });
+}
+function closeVpnPanel() {
+  if ($('vpn-panel').hidden) return;
+  $('vpn-panel').hidden = true;
+  document.body.classList.remove('panel');
+  cloud.setOverlay(false);
+}
+$('vpn-btn').onclick = () => ($('vpn-panel').hidden ? openVpnPanel() : closeVpnPanel());
+$('vp-toggle').onchange = () => cloud.vpnToggle();
+$('vp-country').onchange = e => cloud.vpnCountry(e.target.value);
+$('vp-import').onclick = () => cloud.vpnImport();
+$('vp-check').onclick = () => { closeVpnPanel(); cloud.vpnCheckIp(); };
+for (const b of document.querySelectorAll('.vp-seg button')) b.onclick = () => cloud.vpnMode(b.dataset.mode);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeVpnPanel(); });
+cloud.onVpn(i => { vpnInfo = i; renderVpn(); });
+
+function vpnStatusText(i) {
+  if (!i) return '';
+  const where = i.country ? ` · ${i.country}` : '';
+  switch (i.status) {
+    case 'on': return `Protected${where} · ${i.ip}`;
+    case 'connecting': return i.mode === 'tor' ? `Connecting to Tor… ${i.progress || 0}%` : 'Connecting…';
+    case 'error': return i.error || 'Something went wrong';
+    default: return 'Off · websites can see your real IP address';
+  }
+}
+
+function renderVpn() {
+  const i = vpnInfo;
+  if (!i) return;
+  const btn = $('vpn-btn');
+  btn.className = 'vpn-pill' + (i.enabled ? ' ' + i.status : '');
+  $('vpn-label').textContent = i.enabled && i.status === 'connecting' ? `${i.progress || 0}%` : 'VPN';
+  btn.title = 'CloudBrowser VPN: ' + vpnStatusText(i);
+  if ($('vpn-panel').hidden) return;
+  $('vp-toggle').checked = i.enabled;
+  const st = $('vp-status');
+  st.textContent = vpnStatusText(i);
+  st.className = 'vp-status ' + (i.enabled ? i.status : '');
+  $('vp-progress').classList.toggle('show', i.enabled && i.status === 'connecting');
+  $('vp-progress').firstElementChild.style.width = (i.progress || 0) + '%';
+  for (const b of document.querySelectorAll('.vp-seg button')) b.classList.toggle('sel', b.dataset.mode === i.mode);
+  $('vp-tor').hidden = i.mode !== 'tor';
+  $('vp-wg').hidden = i.mode !== 'wireguard';
+  const sel = $('vp-country');
+  if (sel.options.length !== i.countries.length) sel.replaceChildren(...i.countries.map(([id, name]) => { const o = document.createElement('option'); o.value = id; o.textContent = name; return o; }));
+  sel.value = i.country;
+  $('vp-wg-file').textContent = i.wgConfigName ? `Using ${i.wgConfigName}` : 'No config imported yet';
+}
 
 cloud.onFocusAddress(() => { address.focus(); address.select(); });
 
@@ -267,8 +341,31 @@ function renderTabs() {
   const narrow = !vertical && state.tabs.length > 0 && (strip.parentElement.clientWidth - 200) / state.tabs.length < 90;
   strip.replaceChildren(...state.tabs.map(t => {
     const el = document.createElement('div');
-    el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow ? ' narrow' : '');
-    el.title = t.title;
+    el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow && !t.pinned ? ' narrow' : '') + (t.pinned ? ' pinned' : '');
+    el.title = t.title + (t.pinned ? ' (pinned)' : '');
+    el.draggable = true;
+    el.dataset.index = String(state.tabs.indexOf(t));
+    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-tab', String(t.id)); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => el.classList.remove('dragging'));
+    el.addEventListener('dragover', e => {
+      if (!e.dataTransfer.types.includes('text/x-tab')) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const after = vertical ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+      el.classList.toggle('drop-after', after);
+      el.classList.toggle('drop-before', !after);
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drop-after', 'drop-before'));
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      const id = Number(e.dataTransfer.getData('text/x-tab'));
+      const after = el.classList.contains('drop-after');
+      el.classList.remove('drop-after', 'drop-before');
+      const from = state.tabs.findIndex(x => x.id === id);
+      let to = state.tabs.indexOf(t) + (after ? 1 : 0);
+      if (from < to) to--;
+      if (id && from !== to) cloud.moveTab(id, to);
+    });
     el.onmousedown = e => {
       if (e.button === 0) cloud.switchTab(t.id);
       if (e.button === 1) e.preventDefault();
@@ -296,6 +393,7 @@ function renderTabs() {
     title.className = 'title';
     title.textContent = t.title;
     el.append(title);
+    if (t.pinned) { const p = document.createElement('span'); p.className = 'pin'; p.innerHTML = ICONS.pin; el.append(p); }
 
     if (t.audible || t.muted) {
       const a = document.createElement('button');
@@ -313,7 +411,7 @@ function renderTabs() {
     close.innerHTML = ICONS.close;
     close.onmousedown = e => e.stopPropagation();
     close.onclick = () => cloud.closeTab(t.id);
-    el.append(close);
+    if (!t.pinned || vertical) el.append(close);
     return el;
   }));
   if (vertical) { const a = strip.querySelector('.tab.active'); if (a) a.scrollIntoView({ block: 'nearest' }); }
@@ -393,13 +491,22 @@ function render() {
   star.classList.toggle('on', !!(tab && tab.bookmarked));
   star.title = tab && tab.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
 
+  const zb = $('zoom-badge');
+  const zoomed = tab && tab.zoom && tab.zoom !== 100;
+  zb.classList.toggle('show', !!zoomed);
+  zb.textContent = zoomed ? `${tab.zoom}%` : '';
+  $('reader-btn').classList.toggle('show', !!(tab && tab.readerable));
+  if (state.vpn) { vpnInfo = state.vpn; renderVpn(); }
+
   const shield = $('shield');
   shield.classList.toggle('off', !state.adblock);
+  shield.classList.toggle('allowlisted', !!(tab && tab.adblockOff));
   const blocked = tab ? tab.blocked : 0;
   $('shield-count').textContent = state.adblock && blocked ? (blocked > 99 ? '99+' : String(blocked)) : '';
-  shield.title = state.adblock
-    ? `${blocked} ad${blocked === 1 ? '' : 's'} and tracker${blocked === 1 ? '' : 's'} blocked on this page`
-    : 'Ad & tracker blocking is off';
+  shield.title = !state.adblock ? 'Ad & tracker blocking is off'
+    : tab && tab.adblockOff ? 'Ad blocking is off for this site'
+    : `${blocked} ad${blocked === 1 ? '' : 's'} and tracker${blocked === 1 ? '' : 's'} blocked on this page`;
+  if (tab && tab.adblockOff) $('shield-count').textContent = '';
 
   const dl = state.downloads || {};
   const db = $('downloads');

@@ -26,6 +26,33 @@ function fill(s) {
   $('verticalTabs').checked = s.verticalTabs;
   $('adblock').checked = s.adblock;
   $('askDownloadLocation').checked = s.askDownloadLocation;
+  $('clearOnExit').checked = !!s.clearOnExit;
+  renderAllowlist(s.adblockAllowlist || []);
+}
+
+function renderAllowlist(list) {
+  $('allowlist').replaceChildren(...list.map(host => h('div', { className: 'item' },
+    favicon('https://' + host),
+    h('div', { className: 'main' }, h('div', { className: 't' }, host)),
+    iconButton('close', 'Block ads here again', async () => renderAllowlist(await cloud.call('allowlist-remove', host))),
+  )));
+}
+
+function renderVpn(v) {
+  if (!v) return;
+  $('vpnEnabled').checked = v.enabled;
+  $('vpnMode').value = v.mode;
+  const sel = $('vpnCountry');
+  if (sel.options.length !== v.countries.length) sel.replaceChildren(...v.countries.map(([id, name]) => h('option', { value: id }, name)));
+  sel.value = v.country;
+  $('vpnCountryRow').hidden = v.mode !== 'tor';
+  $('vpnWgRow').hidden = v.mode !== 'wireguard';
+  $('vpnWgName').textContent = v.wgConfigName ? `Using ${v.wgConfigName}` : 'No config imported yet';
+  const where = v.country && v.status === 'on' ? '' : '';
+  $('vpnStatus').textContent = !v.enabled ? 'Off'
+    : v.status === 'on' ? `Connected${v.country ? ' via ' + v.country : ''} · IP ${v.ip}${where}`
+    : v.status === 'connecting' ? `Connecting… ${v.progress || 0}%`
+    : v.status === 'error' ? `Problem: ${v.error}` : '';
 }
 
 function renderAdblockHint(s) {
@@ -89,7 +116,14 @@ $('homeReset').onclick = async () => {
   await set('homePage', e ? e.home : 'https://duckduckgo.com/');
   load();
 };
-for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation']) {
+$('vpnEnabled').onchange = async () => renderVpn(await cloud.call('vpn-toggle'));
+$('vpnMode').onchange = async e => renderVpn(await cloud.call('vpn-mode', e.target.value));
+$('vpnCountry').onchange = async e => renderVpn(await cloud.call('vpn-country', e.target.value));
+$('vpnImport').onclick = async () => renderVpn(await cloud.call('vpn-import'));
+cloud.on('vpn', renderVpn);
+cloud.call('vpn').then(renderVpn);
+
+for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation', 'clearOnExit']) {
   $(id).onchange = e => set(id, e.target.checked);
 }
 $('theme').onchange = e => set('theme', e.target.value);

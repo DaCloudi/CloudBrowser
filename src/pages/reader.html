@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; media-src *; style-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none';">
+  <meta name="color-scheme" content="light dark">
+  <title>Reader</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/reader.css">
+</head>
+<body>
+  <div id="bar">
+    <a id="original" href="#">← Original page</a>
+    <div class="grow"></div>
+    <button id="smaller" title="Smaller text">A−</button>
+    <button id="bigger" title="Bigger text">A+</button>
+    <button data-theme="light" class="sw light" title="Light"></button>
+    <button data-theme="sepia" class="sw sepia" title="Sepia"></button>
+    <button data-theme="dark" class="sw dark" title="Dark"></button>
+    <button id="font" title="Switch font">Serif</button>
+  </div>
+  <article>
+    <div id="site"></div>
+    <h1 id="title"></h1>
+    <div id="meta"></div>
+    <div id="content"></div>
+    <p id="missing" hidden>This article is no longer available in reader mode. Go back to the original page and try again.</p>
+  </article>
+  <script src="/reader.js"></script>
+</body>
+</html>
