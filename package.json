@@ -1,0 +1,57 @@
+{
+  "name": "cloudbrowser",
+  "productName": "CloudBrowser",
+  "version": "1.0.0",
+  "description": "A lightweight, private web browser that searches with DuckDuckGo.",
+  "main": "src/main.js",
+  "author": "CloudBrowser",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.cloudbrowser.app",
+    "productName": "CloudBrowser",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CloudBrowser"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "DaCloudi",
+      "repo": "CloudBrowser",
+      "releaseType": "release"
+    }
+  }
+}

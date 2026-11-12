@@ -1,0 +1,122 @@
+:root {
+  --ui-height: 84px;           /* must match UI_HEIGHT in main.js */
+  --sky: #eaf1fb;
+  --sky-deep: #dbe6f6;
+  --tab-active: #ffffff;
+  --text: #1f2a3c;
+  --muted: #6b7a90;
+  --accent: #2f7de1;
+  --private: #6a4fc9;
+  --field: #f1f5fb;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: var(--ui-height);
+  overflow: hidden;
+  font: 13px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+  background: var(--sky);
+  user-select: none;
+}
+
+body.private-mode { --sky: #ece8f8; --sky-deep: #ddd6f3; --accent: var(--private); }
+
+/* ---------- tab strip ---------- */
+#tabstrip {
+  height: 38px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 8px;
+  background: var(--sky-deep);
+  -webkit-app-region: drag;
+}
+#tabs { display: flex; min-width: 0; flex: 0 1 auto; gap: 2px; overflow: hidden; }
+
+.tab {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 8px;
+  width: 220px; min-width: 56px; flex: 0 1 220px;
+  height: 32px; padding: 0 6px 0 12px;
+  border-radius: 10px 10px 0 0;
+  color: var(--muted);
+  cursor: default;
+  position: relative;
+}
+.tab:hover { background: rgba(255,255,255,.45); }
+.tab.active { background: var(--tab-active); color: var(--text); }
+.tab .favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
+.tab .favicon.placeholder { background: radial-gradient(circle at 40% 45%, #9cc2f2 0 5px, transparent 6px), radial-gradient(circle at 65% 55%, #b7d3f6 0 5px, transparent 6px); }
+.tab .spinner { width: 14px; height: 14px; flex: none; border: 2px solid #c8d6ea; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.tab .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab .private-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--private); flex: none; }
+.tab .close {
+  width: 20px; height: 20px; border: 0; border-radius: 50%;
+  background: transparent; color: var(--muted); font-size: 14px; line-height: 20px; padding: 0;
+  flex: none;
+}
+.tab .close:hover { background: #e3e9f2; color: var(--text); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- toolbar ---------- */
+#toolbar {
+  height: 46px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 8px;
+  background: #fff;
+  border-bottom: 1px solid #e3e9f2;
+}
+
+button { font: inherit; color: inherit; }
+button.icon {
+  -webkit-app-region: no-drag;
+  width: 32px; height: 32px; border: 0; border-radius: 8px;
+  background: transparent; display: grid; place-items: center; flex: none;
+  font-size: 18px; color: var(--text);
+}
+button.icon:hover:not(:disabled) { background: var(--field); }
+button.icon:disabled { opacity: .35; }
+button.icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#menu svg circle { fill: currentColor; stroke: none; }
+
+#stop-icon { display: none; }
+#reload.loading #reload-icon { display: none; }
+#reload.loading #stop-icon { display: block; }
+
+#private.on { background: var(--private); color: #fff; }
+
+#addressform {
+  flex: 1; display: flex; align-items: center;
+  height: 34px; margin: 0 6px; padding: 0 12px;
+  background: var(--field); border-radius: 17px;
+  border: 1.5px solid transparent;
+}
+#addressform:focus-within { background: #fff; border-color: var(--accent); }
+#lock { display: none; width: 16px; height: 16px; margin-right: 8px; color: var(--muted); }
+#lock.on { display: block; }
+#lock svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+#address {
+  flex: 1; border: 0; outline: 0; background: transparent;
+  font: 14px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text);
+  user-select: text;
+}
+
+#update {
+  display: none;
+  height: 30px; padding: 0 12px; border: 0; border-radius: 15px;
+  background: #1f9d55; color: #fff; font-weight: 600; white-space: nowrap;
+}
+#update.show { display: block; }
+#update:hover { background: #188a49; }
+
+/* ---------- load progress ---------- */
+#progress {
+  position: fixed; left: 0; top: calc(var(--ui-height) - 2px); height: 2px; width: 0;
+  background: var(--accent);
+  transition: width .3s ease, opacity .4s ease;
+  opacity: 0;
+}
+#progress.loading { width: 70%; opacity: 1; transition: width 4s cubic-bezier(.1,.7,.3,1); }
+#progress.done { width: 100%; opacity: 0; }
