@@ -10,8 +10,12 @@ if (!chrome) { console.log('[BASELINE] Chrome not installed'); process.exit(0); 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-'));
 const proc = spawn(chrome, ['--remote-debugging-port=9333', `--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check', 'about:blank']);
 const wait = ms => new Promise(r => setTimeout(r, ms));
-await wait(4000);
-const targets = await (await fetch('http://127.0.0.1:9333/json')).json();
+let targets = null;
+for (let i = 0; i < 40 && !targets; i++) {
+  await wait(1000);
+  try { targets = await (await fetch('http://127.0.0.1:9333/json')).json(); } catch {}
+}
+if (!targets) { console.log('[BASELINE] Chrome did not start'); proc.kill(); process.exit(0); }
 const page = targets.find(t => t.type === 'page');
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise(r => ws.addEventListener('open', r));
