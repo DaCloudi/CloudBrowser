@@ -1,7 +1,7 @@
 {
   "name": "cloudbrowser",
   "productName": "CloudBrowser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A lightweight, private web browser that searches with DuckDuckGo.",
   "main": "src/main.js",
   "author": "CloudBrowser",
@@ -45,7 +45,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "CloudBrowser"
+      "shortcutName": "CloudBrowser",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "publish": {
       "provider": "github",

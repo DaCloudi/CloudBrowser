@@ -43,8 +43,19 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: npm install
 
-      - name: Build and publish
+      - name: Build installer
         if: steps.check.outputs.skip != 'true'
+        run: npx electron-builder --win --publish never
+
+      - name: Publish release
+        if: steps.check.outputs.skip != 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: |
+          V=${{ steps.check.outputs.version }}
+          gh release create "v$V" \
+            "dist/CloudBrowser-Setup-$V.exe" \
+            "dist/CloudBrowser-Setup-$V.exe.blockmap" \
+            dist/latest.yml \
+            --title "CloudBrowser $V" --notes "CloudBrowser $V" --target "$GITHUB_SHA"
