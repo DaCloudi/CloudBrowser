@@ -2835,80 +2835,104 @@ async function smokeTest() {
     S('sidebar: closed, page width', t.view.getBounds().width, 'win', w.win.getContentBounds().width);
   });
 
+  // YouTube asks CI machines to "sign in to confirm you're not a bot", so for the YouTube features
+  // CloudBrowser is shown a stand-in youtube.com page (a real video file, real SponsorBlock data).
   let video = null;
+  const ses = session.fromPartition(NORMAL_PARTITION);
+  const jsIn = (wc, code) => Promise.race([wc.executeJavaScript(code, true), wait(8000).then(() => 'TIMEOUT')]).catch(e => 'ERR ' + e.message);
+  let videoFile = null;
+  for (const u of ['https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c0/Big_Buck_Bunny_4K.webm/Big_Buck_Bunny_4K.webm.360p.webm',
+    'https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c0/Big_Buck_Bunny_4K.webm/Big_Buck_Bunny_4K.webm.480p.vp9.webm',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4']) {
+    try { const r = await ses.fetch(u, { method: 'HEAD' }); S('video file', r.status, u.slice(-40)); if (r.ok) { videoFile = u; break; } } catch (e) { S('video file err', e.message); }
+  }
+  const fakeYt = (title) => `<!doctype html><html><head><meta charset="utf-8"><title>${title} - YouTube</title></head>
+    <body style="background:#0f0f0f;color:#fff;font:14px system-ui;margin:0">
+    <div class="html5-video-player" style="padding:16px"><video src="${videoFile}" controls style="width:640px;height:360px;background:#000"></video></div>
+    <h2 style="padding:0 16px">${title}</h2>
+    <div id="feed" style="display:flex;gap:12px;padding:16px">
+      <ytd-rich-item-renderer style="display:block;width:150px;height:90px;background:#c33"><a href="/shorts/abcdefghijk">A Short</a></ytd-rich-item-renderer>
+      <ytd-rich-item-renderer style="display:block;width:150px;height:90px;background:#36c"><a href="/watch?v=zzzzzzzzzzz">A normal video</a></ytd-rich-item-renderer>
+    </div></body></html>`;
+  await ses.protocol.handle('https', (req) => {
+    const u = new URL(req.url);
+    if (u.hostname === 'www.youtube.com' && (u.pathname === '/watch' || u.pathname === '/' || u.pathname.startsWith('/shorts/'))) {
+      return new Response(fakeYt(u.pathname === '/watch' ? 'Test video ' + u.searchParams.get('v') : 'Home'), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
+    return ses.fetch(req, { bypassCustomProtocolHandlers: true });
+  });
+
   await step('sponsorblock', async () => {
-    // Find a real video with a sponsor segment: any hash prefix returns some.
-    for (const prefix of ['a1b2', '0f3c', '7d4e', 'c0de']) {
-      const r = await session.fromPartition(NORMAL_PARTITION).fetch(`https://sponsor.ajay.app/api/skipSegments/${prefix}?categories=["sponsor"]`);
+    for (const prefix of ['a1b2', '0f3c', '7d4e', 'c0de', '5e5e']) {
+      const r = await ses.fetch(`https://sponsor.ajay.app/api/skipSegments/${prefix}?categories=["sponsor"]`);
       if (!r.ok) { S('sb api', prefix, r.status); continue; }
       const all = await r.json();
-      const hit = all.map(v => ({ id: v.videoID, seg: v.segments.find(x => x.actionType === 'skip' && x.segment[0] > 20 && x.segment[0] < 400 && x.segment[1] - x.segment[0] > 8) })).find(v => v.seg && /^[\w-]{11}$/.test(v.id));
+      const hit = all.map(v => ({ id: v.videoID, seg: v.segments.find(x => x.actionType === 'skip' && x.segment[0] > 20 && x.segment[0] < 300 && x.segment[1] - x.segment[0] > 8) })).find(v => v.seg && /^[\w-]{11}$/.test(v.id));
       if (hit) { video = hit; break; }
     }
     S('sponsorblock test video', video && video.id, JSON.stringify(video && video.seg.segment));
-    if (!video) return;
+    if (!video || !videoFile) return;
     const wc = t.view.webContents;
     load(wc, 'https://www.youtube.com/watch?v=' + video.id);
-    await waitFor(() => !wc.isLoading(), 25000);
-    await wait(5000);
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(2500);
     const [a, b] = video.seg.segment;
-    const js = (code) => Promise.race([wc.executeJavaScript(code, true), wait(8000).then(() => 'TIMEOUT')]).catch(e => 'ERR ' + e.message);
-    S('sponsorblock: page', tabUrl(t).slice(0, 60), '|', wc.getTitle().slice(0, 50), '| video element', await js(`!!document.querySelector('video')`),
-      '| segments fetched', [...sbCache.entries()].filter(([k]) => k.startsWith(video.id)).map(([, v]) => v.segs.length).join(','));
-    await js(`(() => { const v = document.querySelector('video'); if (v) { v.muted = true; v.play().catch(() => {}); } return 1; })()`);
-    await waitFor(async () => (await js(`!document.querySelector('.html5-video-player.ad-showing')`)) === true, 25000);
-    await js(`(() => { const v = document.querySelector('video'); v.currentTime = ${a} - 1.5; v.play().catch(() => {}); return 1; })()`);
-    await wait(6000);
-    const r = await js(`JSON.stringify({ now: +document.querySelector('video').currentTime.toFixed(1), paused: document.querySelector('video').paused, toast: (document.getElementById('cloud-sb-toast') || {}).textContent || null })`);
+    S('sponsorblock: page', tabUrl(t).slice(0, 60), '|', wc.getTitle().slice(0, 40), '| segments fetched',
+      [...sbCache.entries()].filter(([k]) => k.startsWith(video.id)).map(([, v]) => v.segs.length).join(','));
+    await jsIn(wc, `(() => { const v = document.querySelector('video'); v.volume = 0.05; v.play().catch(() => {}); return 1; })()`);
+    await waitFor(async () => (await jsIn(wc, `document.querySelector('video').readyState >= 2 && !document.querySelector('video').paused`)) === true, 20000);
+    await jsIn(wc, `(() => { const v = document.querySelector('video'); v.currentTime = ${a} - 1.5; return 1; })()`);
+    await wait(5000);
+    const r = await jsIn(wc, `JSON.stringify({ now: +document.querySelector('video').currentTime.toFixed(1), paused: document.querySelector('video').paused, toast: (document.getElementById('cloud-sb-toast') || {}).textContent || null })`);
+    let skippedOk = false; try { skippedOk = JSON.parse(r).now >= b - 1; } catch {}
+    S('sponsorblock: segment', a, '→', b, '| after:', r, '| skipped?', skippedOk);
     await screen('sponsorblock');
   });
 
   await step('media controls', async () => {
-    await wait(1500);
+    await wait(1000);
     await refreshMedia();
-    S('media state', JSON.stringify(currentMedia && currentMedia.info));
+    S('media state', JSON.stringify(currentMedia && currentMedia.info), 'from', currentMedia && currentMedia.label);
     await ui(w, `document.getElementById('media-btn').click()`);
     await wait(800);
-    S('media panel', await ui(w, `JSON.stringify({ shown: !document.getElementById('media-panel').hidden, title: document.getElementById('mp-title').textContent })`));
+    S('media panel', await ui(w, `JSON.stringify({ shown: !document.getElementById('media-panel').hidden, title: document.getElementById('mp-title').textContent, button: document.getElementById('media-btn').classList.contains('show') })`));
     await screen('media-panel');
     await mediaAction(w, 'toggle');
     await wait(1200);
-    S('media after toggle: playing =', currentMedia && currentMedia.info && currentMedia.info.playing);
+    S('media after pause: playing =', currentMedia && currentMedia.info && currentMedia.info.playing);
     await ui(w, `closeMediaPanel()`);
     await mediaAction(w, 'toggle');
-    await wait(800);
+    await wait(1200);
+    S('media after play: playing =', currentMedia && currentMedia.info && currentMedia.info.playing);
   });
 
   await step('auto picture-in-picture', async () => {
-    if (!video) return;
+    if (!video || !videoFile) return;
     const vt = t;
-    const playing = vt.view.webContents.isCurrentlyAudible() || await vt.view.webContents.executeJavaScript(`!document.querySelector('video').paused`);
-    // Muted videos aren't "audible", so unmute for the real check.
-    await vt.view.webContents.executeJavaScript(`(() => { const v = document.querySelector('video'); v.muted = false; v.volume = 0.05; return v.play(); })()`, true).catch(() => {});
-    await wait(2500);
-    S('pip: audible', vt.view.webContents.isCurrentlyAudible(), 'playing', playing);
+    await wait(1500);
+    S('pip: audible', vt.view.webContents.isCurrentlyAudible());
     const other = createTab(w, 'https://example.com/');
     await wait(2500);
-    S('pip: after switching away, in PiP =', await vt.view.webContents.executeJavaScript('!!document.pictureInPictureElement'));
+    S('pip: after switching away, in PiP =', await jsIn(vt.view.webContents, '!!document.pictureInPictureElement'));
     await screen('auto-pip');
     switchTab(w, vt.id);
     await wait(1500);
-    S('pip: after coming back, in PiP =', await vt.view.webContents.executeJavaScript('!!document.pictureInPictureElement'));
+    S('pip: after coming back, in PiP =', await jsIn(vt.view.webContents, '!!document.pictureInPictureElement'));
     closeTab(other.id);
   });
 
   await step('shorts', async () => {
     const wc = t.view.webContents;
-    load(wc, 'https://www.youtube.com/shorts/' + (video ? video.id : 'aqz-KE-bpKQ'));
-    await waitFor(() => !wc.isLoading(), 20000);
-    await wait(4000);
-    S('shorts: ended up at', tabUrl(t).slice(0, 70), '| style present', await wc.executeJavaScript(`!!document.getElementById('cloud-no-shorts')`));
-    load(wc, 'https://www.youtube.com/results?search_query=minecraft');
-    await waitFor(() => !wc.isLoading(), 20000);
-    await wait(5000);
-    S('shorts: visible shorts on search page', await wc.executeJavaScript(`[...document.querySelectorAll('a[href^="/shorts/"]')].filter(a => a.offsetParent).length`));
+    load(wc, 'https://www.youtube.com/shorts/abcdefghijk');
+    await waitFor(() => !wc.isLoading(), 15000);
+    await wait(2500);
+    S('shorts: /shorts/ link ended up at', tabUrl(t).slice(0, 70));
+    S('shorts: feed items visible', await jsIn(wc, `JSON.stringify([...document.querySelectorAll('ytd-rich-item-renderer')].map(e => e.textContent.trim() + '=' + (e.offsetParent ? 'shown' : 'hidden')))`));
     await screen('no-shorts');
+    load(wc, 'https://example.com/');
+    await waitFor(() => !wc.isLoading(), 10000);
   });
+  try { ses.protocol.unhandle('https'); } catch (e) { S('unhandle failed', e.message); }
 
   await step('pop out', async () => {
     const pt = createTab(w, 'https://en.wikipedia.org/wiki/Virtual_reality');
