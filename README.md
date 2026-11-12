@@ -36,15 +36,12 @@ installs the next time you close the app.
 ### Releasing an update
 
 1. Change whatever you like.
-2. Push a version tag:
-   ```
-   git tag v1.0.1
-   git push origin v1.0.1
-   ```
+2. Raise `"version"` in `package.json` (for example `1.0.0` → `1.0.1`) and push to `main`.
 3. GitHub Actions (`.github/workflows/release.yml`) builds the installer and publishes
-   the release. Every installed CloudBrowser picks it up automatically.
+   release `v1.0.1`. Every installed CloudBrowser picks it up automatically.
 
-Always tag a higher version number than the last one, or the update won't be offered.
+Always use a higher version number than the last one, or the update won't be offered.
+You can also start a release by hand from the repository's **Actions** tab → **Release** → **Run workflow**.
 
 > The repository must be **public**. Installed apps can't download updates from a
 > private repository without a token.
