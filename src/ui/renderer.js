@@ -366,4 +366,11 @@ function render() {
   if (u.status === 'ready') upd.textContent = `Update ${u.version} ready – restart`;
 }
 
-window.addEventListener('resize', () => { if (state) renderTabs(); closeOverlay(); });
+// Opening the suggestions makes this view taller, so only react to width changes.
+let lastWidth = window.innerWidth;
+window.addEventListener('resize', () => {
+  if (window.innerWidth === lastWidth) return;
+  lastWidth = window.innerWidth;
+  if (state) renderTabs();
+  closeOverlay();
+});
