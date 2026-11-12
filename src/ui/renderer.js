@@ -289,7 +289,7 @@ address.addEventListener('keydown', e => {
 $('backdrop').addEventListener('mousedown', e => {
   e.preventDefault();
   if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); return; }
-  closeOverlay(); address.blur(); cloud.focusPage();
+  closeOverlay(); editing = false; address.blur(); render(); cloud.focusPage();
 });
 
 // ---------- VPN panel ----------
