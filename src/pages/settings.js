@@ -32,6 +32,13 @@ function fill(s) {
   $('sendGpc').checked = !!s.sendGpc;
   $('incognitoScreenProtection').checked = !!s.incognitoScreenProtection;
   $('incognitoVpn').checked = !!s.incognitoVpn;
+  $('sidebarAppsEnabled').checked = !!s.sidebarAppsEnabled;
+  $('sponsorBlock').checked = !!s.sponsorBlock;
+  $('hideShorts').checked = !!s.hideShorts;
+  $('autoPip').checked = !!s.autoPip;
+  $('vrMode').value = s.vrMode;
+  $('uiScale').value = String(s.uiScale);
+  renderSbCats(s);
   renderAllowlist(s.adblockAllowlist || []);
 }
 
@@ -152,6 +159,25 @@ for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 
   $(id).onchange = e => set(id, e.target.checked);
 }
 $('theme').onchange = e => set('theme', e.target.value);
+for (const id of ['sidebarAppsEnabled', 'sponsorBlock', 'hideShorts', 'autoPip']) {
+  $(id).onchange = async e => { await set(id, e.target.checked); if (id === 'sponsorBlock') $('sbCatsRow').hidden = !e.target.checked; };
+}
+$('vrMode').onchange = e => set('vrMode', e.target.value);
+$('uiScale').onchange = e => set('uiScale', Number(e.target.value));
+const SB_CATS = [['sponsor', 'Sponsors'], ['selfpromo', 'Self-promotion'], ['interaction', '“Like and subscribe” reminders'], ['intro', 'Intros'], ['outro', 'End cards'], ['preview', 'Previews and recaps'], ['filler', 'Off-topic tangents'], ['music_offtopic', 'Talking in music videos']];
+function renderSbCats(s) {
+  $('sbCatsRow').hidden = !s.sponsorBlock;
+  const on = new Set(s.sponsorCategories || []);
+  $('sbCats').replaceChildren(...SB_CATS.map(([id, name]) => {
+    const box = h('input', { type: 'checkbox', checked: on.has(id) });
+    box.onchange = async () => {
+      if (box.checked) on.add(id); else on.delete(id);
+      await cloud.call('set-sponsor-categories', [...on]);
+    };
+    return h('label', { className: 'check' }, box, name);
+  }));
+}
+cloud.call('vr-status').then(v => { if (v && v.active) $('vrHint').textContent = 'A VR app is running right now, so VR mode is on.'; });
 $('openDlFolder').onclick = () => cloud.call('open-downloads-folder');
 $('checkUpdates').onclick = () => cloud.call('check-updates');
 $('installUpdate').onclick = () => cloud.call('install-update');

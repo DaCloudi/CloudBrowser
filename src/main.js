@@ -84,6 +84,19 @@ const DEFAULT_SETTINGS = {
   passwordManager: 'bitwarden', // bitwarden | none
   bitwardenSetupDone: false,    // installed + pinned once (don't redo it if the user removes it)
   alwaysTranslate: [],          // language codes translated automatically
+  sidebarAppsEnabled: true,     // the app rail on the right
+  sidebarApps: [
+    { id: 'discord', title: 'Discord', url: 'https://discord.com/app' },
+    { id: 'ytmusic', title: 'YouTube Music', url: 'https://music.youtube.com/' },
+    { id: 'vrchat', title: 'VRChat', url: 'https://vrchat.com/home' },
+  ],
+  sidebarWidth: 440,
+  sponsorBlock: true,
+  sponsorCategories: ['sponsor', 'selfpromo', 'interaction'],
+  hideShorts: true,
+  autoPip: true,
+  vrMode: 'auto',               // auto | off
+  uiScale: 100,                 // 100 | 125 | 150
   neverTranslate: [],           // language codes never offered
   clearOnExit: false,
   shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
@@ -91,7 +104,7 @@ const DEFAULT_SETTINGS = {
 };
 const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
   'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn',
-  'bitwardenSetupDone', 'alwaysTranslate', 'neverTranslate']);
+  'bitwardenSetupDone', 'alwaysTranslate', 'neverTranslate', 'sidebarApps', 'sponsorCategories']);
 
 // Shown on the home page until there's enough history to replace them.
 const DEFAULT_SITES = [
@@ -334,6 +347,13 @@ function pushState(w) {
     pinnedExtensions: settings.data.pinnedExtensions || [],
     activeWcId: t ? t.view.webContents.id : null,
     storeExtension: storeExtensionFor(t),
+    sidebar: (!w.incognito && settings.data.sidebarAppsEnabled) ? {
+      apps: settings.data.sidebarApps.map(a => ({ ...a, badge: panelBadge(w, a.id) })),
+      open: w.panelApp,
+    } : null,
+    media: currentMedia && currentMedia.info ? { ...currentMedia.info, sourceTitle: currentMedia.label } : null,
+    vrActive,
+    uiScale: settings.data.uiScale,
     vpn: vpn ? vpn.info() : null,
     maximized: w.win.isMaximized(),
   });
@@ -351,20 +371,32 @@ function layout(w) {
   const { width, height } = w.win.getContentBounds();
   const x = w.htmlFullscreen ? 0 : w.pageX;
   const y = w.htmlFullscreen ? 0 : w.pageY;
-  for (const t of w.tabs) t.view.setBounds({ x, y, width: Math.max(0, width - x), height: Math.max(0, height - y) });
+  const panelOpen = !w.htmlFullscreen && w.panelApp && w.panelViews.has(w.panelApp);
+  const panelW = panelOpen ? Math.min(settings.data.sidebarWidth, Math.max(0, width - x - w.railW - 320)) : 0;
+  const right = w.htmlFullscreen ? 0 : w.railW + panelW;
+  for (const t of w.tabs) t.view.setBounds({ x, y, width: Math.max(0, width - x - right), height: Math.max(0, height - y) });
+  for (const [id, v] of w.panelViews) {
+    const show = panelOpen && id === w.panelApp;
+    v.setVisible(show);
+    if (show) v.setBounds({ x: width - w.railW - panelW, y, width: panelW, height: Math.max(0, height - y) });
+  }
   w.ui.setBounds({ x: 0, y: 0, width, height });
 }
 
 function setOverlay(w, open) {
   w.overlayOpen = open;
   if (open) w.win.contentView.addChildView(w.ui); // lift the UI above the page
-  else for (const t of w.tabs) w.win.contentView.addChildView(t.view); // pages back on top
+  else {
+    for (const t of w.tabs) w.win.contentView.addChildView(t.view); // pages back on top
+    for (const v of w.panelViews.values()) w.win.contentView.addChildView(v);
+  }
   layout(w);
 }
 
 function titleBarColors(incognito) {
-  if (incognito) return { color: '#15111e', symbolColor: '#ece6fb', height: TITLEBAR_HEIGHT };
-  return { color: '#07101b', symbolColor: '#ffffff', height: TITLEBAR_HEIGHT }; // Discord Lite navy
+  const height = Math.round(TITLEBAR_HEIGHT * ((settings && settings.data.uiScale) || 100) / 100);
+  if (incognito) return { color: '#15111e', symbolColor: '#ece6fb', height };
+  return { color: '#07101b', symbolColor: '#ffffff', height }; // Discord Lite navy
 }
 
 // ---------- windows ----------
@@ -392,7 +424,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   }
   const w = {
     id: nextWinId++, incognito, tabs: [], activeId: null, closedTabs: [],
-    pageX: 0, pageY: 84, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
+    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
   windows.add(w);
@@ -416,6 +448,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     w.ui.webContents.on('console-message', (ev) => log('[ui console]', ev.message));
     w.ui.webContents.on('preload-error', (_e, p, err) => log('[ui preload-error]', p, String(err)));
   }
+  w.ui.webContents.on('did-finish-load', () => applyUiScale(w));
   w.ui.webContents.once('did-finish-load', async () => {
     // Incognito through the VPN: set up the kill switch before the first page loads.
     if (incognito && vpn) await vpn.setIncognitoOpen(true);
@@ -447,6 +480,8 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   });
   w.win.on('closed', () => {
     for (const t of w.tabs) { try { t.view.webContents.close(); } catch {} }
+    for (const v of w.panelViews.values()) { try { v.webContents.close(); } catch {} }
+    if (currentMedia && currentMedia.w === w) currentMedia = null;
     try { w.ui.webContents.close(); } catch {}
     w.tabs = [];
     windows.delete(w);
@@ -524,6 +559,8 @@ function wireTab(tab) {
     setTimeout(() => { if (!wc.isDestroyed() && !wc.isLoading()) { checkReaderable(tab); detectLanguage(tab); } }, 400);
   });
   wc.on('audio-state-changed', update);
+  wc.on('media-started-playing', () => mediaEvent({ kind: 'tab', tab }, true));
+  wc.on('media-paused', () => mediaEvent({ kind: 'tab', tab }, false));
   wc.on('page-title-updated', (_e, title) => {
     if (tab.histEntry && tab.histEntry.url === wc.getURL()) { tab.histEntry.title = title; history.save(); }
     update();
@@ -619,7 +656,11 @@ function switchTab(w, id) {
     uiSend(w, 'find-close');
   }
   const prevTab = activeTab(w);
-  if (prevTab && prevTab.id !== id) prevTab.lastActive = Date.now();
+  if (prevTab && prevTab.id !== id) {
+    prevTab.lastActive = Date.now();
+    if (settings.data.autoPip && isYouTube(tabUrl(prevTab)) && prevTab.view.webContents.isCurrentlyAudible()) pipEnter(prevTab.view.webContents);
+  }
+  if (prevTab && prevTab.id !== id && isYouTube(tabUrl(t))) pipExit(t.view.webContents);
   w.activeId = id;
   t.lastActive = Date.now();
   if (t.sleeping) wakeTab(t);
@@ -1633,6 +1674,294 @@ function openBitwarden(w) {
   uiSend(w, 'open-extension', BITWARDEN_ID);
 }
 
+// ---------- sidebar apps (Discord, YouTube Music, VRChat, …) ----------
+// Each app is a page docked on the right. It stays alive while hidden, so music keeps playing.
+
+const SIDEBAR_PRESETS = [
+  { title: 'Discord', url: 'https://discord.com/app' },
+  { title: 'YouTube Music', url: 'https://music.youtube.com/' },
+  { title: 'VRChat', url: 'https://vrchat.com/home' },
+  { title: 'YouTube', url: 'https://www.youtube.com/' },
+  { title: 'Twitch', url: 'https://www.twitch.tv/' },
+  { title: 'WhatsApp', url: 'https://web.whatsapp.com/' },
+  { title: 'Roblox', url: 'https://www.roblox.com/home' },
+  { title: 'Reddit', url: 'https://www.reddit.com/' },
+];
+
+function panelBadge(w, id) {
+  const v = w.panelViews.get(id);
+  if (!v || v.webContents.isDestroyed()) return 0;
+  const m = /^\((\d+)\)|^[•●] /.exec(v.webContents.getTitle() || '');
+  return m ? (m[1] ? Number(m[1]) : -1) : 0; // -1 = "something new"
+}
+
+function createPanelView(w, app) {
+  const v = new WebContentsView({
+    webPreferences: { partition: NORMAL_PARTITION, preload: path.join(__dirname, 'preload-page.js'), contextIsolation: true, sandbox: true, spellcheck: true },
+  });
+  v.setBackgroundColor('#07101b');
+  const wc = v.webContents;
+  if (vpn) vpn.protectContents(wc, false);
+  wc.setWindowOpenHandler(({ url }) => { createTab(w, cleanUrl(url)); return { action: 'deny' }; });
+  wc.on('before-input-event', (event, input) => { if (handleShortcut(w, input)) event.preventDefault(); });
+  wc.on('page-title-updated', () => sendState(w));
+  wc.on('media-started-playing', () => mediaEvent({ kind: 'panel', w, appId: app.id, wc }, true));
+  wc.on('media-paused', () => mediaEvent({ kind: 'panel', w, appId: app.id, wc }, false));
+  wc.on('context-menu', (_e, p) => {
+    Menu.buildFromTemplate([
+      { label: 'Back', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
+      { label: 'Reload', click: () => wc.reload() },
+      { type: 'separator' },
+      ...(p.linkURL ? [{ label: 'Open link in new tab', click: () => createTab(w, p.linkURL) }, { label: 'Copy link address', click: () => clipboard.writeText(p.linkURL) }] : []),
+      ...(p.isEditable ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }] : p.selectionText ? [{ role: 'copy' }] : []),
+      { label: 'Open in a tab', click: () => createTab(w, wc.getURL()) },
+      { label: 'Inspect', click: () => wc.inspectElement(p.x, p.y) },
+    ]).popup({ window: w.win });
+  });
+  if (extensions) { addingTab = true; try { extensions.addTab(wc, w.win); } catch {} finally { addingTab = false; } }
+  w.win.contentView.addChildView(v);
+  load(wc, app.url);
+  return v;
+}
+
+function togglePanel(w, id) {
+  if (w.incognito || !settings.data.sidebarAppsEnabled) return;
+  const app = settings.data.sidebarApps.find(a => a.id === id);
+  if (!app) return;
+  if (w.panelApp === id) { w.panelApp = null; layout(w); sendState(w); activeTab(w)?.view.webContents.focus(); return; }
+  if (!w.panelViews.has(id)) w.panelViews.set(id, createPanelView(w, app));
+  w.panelApp = id;
+  layout(w);
+  w.panelViews.get(id).webContents.focus();
+  sendState(w);
+}
+
+function closePanel(w) { if (w.panelApp) { w.panelApp = null; layout(w); sendState(w); } }
+
+function destroyPanel(w, id) {
+  const v = w.panelViews.get(id);
+  if (!v) return;
+  w.panelViews.delete(id);
+  if (w.panelApp === id) w.panelApp = null;
+  try { w.win.contentView.removeChildView(v); v.webContents.close(); } catch {}
+  if (currentMedia && currentMedia.kind === 'panel' && currentMedia.appId === id) { currentMedia = null; sendStateAll(); }
+  layout(w);
+}
+
+function addSidebarApp(title, url) {
+  url = toUrl(url);
+  if (!/^https?:/.test(url)) return;
+  const apps = settings.data.sidebarApps;
+  if (apps.some(a => a.url === url) || apps.length >= 10) return;
+  apps.push({ id: 'app' + Date.now().toString(36), title: String(title || hostOf(url)).slice(0, 40), url });
+  settings.data.sidebarAppsEnabled = true;
+  settings.save();
+  sendStateAll();
+}
+
+function showSidebarAddMenu(w) {
+  const have = new Set(settings.data.sidebarApps.map(a => a.url));
+  const t = activeTab(w);
+  Menu.buildFromTemplate([
+    ...(t && /^https?:/.test(tabUrl(t)) ? [{ label: `Add this page (${(t.view.webContents.getTitle() || hostOf(tabUrl(t))).slice(0, 30)})`, click: () => addSidebarApp(t.view.webContents.getTitle() || hostOf(tabUrl(t)), tabUrl(t)) }, { type: 'separator' }] : []),
+    ...SIDEBAR_PRESETS.map(p => ({ label: p.title, enabled: !have.has(p.url), click: () => addSidebarApp(p.title, p.url) })),
+    { type: 'separator' },
+    { label: 'Hide the sidebar', click: () => setSetting('sidebarAppsEnabled', false) },
+  ]).popup({ window: w.win });
+}
+
+function showSidebarAppMenu(w, id) {
+  const app = settings.data.sidebarApps.find(a => a.id === id);
+  if (!app) return;
+  const v = w.panelViews.get(id);
+  const width = settings.data.sidebarWidth;
+  const apps = settings.data.sidebarApps;
+  const i = apps.indexOf(app);
+  Menu.buildFromTemplate([
+    { label: app.title, enabled: false },
+    { type: 'separator' },
+    { label: 'Reload', enabled: !!v, click: () => v.webContents.reload() },
+    { label: 'Go to its home page', enabled: !!v, click: () => load(v.webContents, app.url) },
+    { label: 'Open in a tab', click: () => createTab(w, v ? v.webContents.getURL() : app.url) },
+    { label: 'Close it (stop running)', enabled: !!v, click: () => destroyPanel(w, id) },
+    { type: 'separator' },
+    { label: 'Width', submenu: [[360, 'Narrow'], [440, 'Medium'], [560, 'Wide']].map(([px, name]) => ({ label: name, type: 'radio', checked: width === px, click: () => setSetting('sidebarWidth', px) })) },
+    { label: 'Move up', enabled: i > 0, click: () => { [apps[i - 1], apps[i]] = [apps[i], apps[i - 1]]; settings.save(); sendStateAll(); } },
+    { label: 'Move down', enabled: i < apps.length - 1, click: () => { [apps[i + 1], apps[i]] = [apps[i], apps[i + 1]]; settings.save(); sendStateAll(); } },
+    { label: 'Remove from sidebar', click: () => {
+      for (const x of windows) destroyPanel(x, id);
+      settings.data.sidebarApps = apps.filter(a => a.id !== id);
+      settings.save(); sendStateAll();
+    } },
+  ]).popup({ window: w.win });
+}
+
+// ---------- media controls (whatever is playing, in any tab or sidebar app) ----------
+
+let currentMedia = null; // { kind, tab?, w?, appId?, wc, label, info }
+const MEDIA_INFO_JS = `(() => {
+  const md = navigator.mediaSession && navigator.mediaSession.metadata;
+  const ms = [...document.querySelectorAll('video, audio')];
+  const playing = ms.some(m => !m.paused && !m.ended);
+  const art = md && md.artwork && md.artwork.length ? md.artwork[md.artwork.length - 1].src : '';
+  const q = (s) => document.querySelector(s);
+  return {
+    title: (md && md.title) || document.title, artist: (md && md.artist) || '', artwork: art, playing, hasMedia: ms.length > 0,
+    canNext: !!q('ytmusic-player-bar .next-button, .ytp-next-button:not([aria-disabled="true"]), .skipControl__next'),
+    canPrev: !!q('ytmusic-player-bar .previous-button, .ytp-prev-button:not([aria-disabled="true"]), .skipControl__previous'),
+  };
+})()`;
+
+function mediaSourceWc(src) { return src.kind === 'tab' ? src.tab.view.webContents : src.wc; }
+
+async function refreshMedia() {
+  if (!currentMedia) return;
+  const wc = mediaSourceWc(currentMedia);
+  if (!wc || wc.isDestroyed() || (currentMedia.kind === 'tab' && !allTabs().includes(currentMedia.tab) && !currentMedia.tab.popped)) {
+    currentMedia = null; sendStateAll(); return;
+  }
+  try {
+    const info = await wc.executeJavaScript(MEDIA_INFO_JS);
+    if (!info.hasMedia) { currentMedia = null; sendStateAll(); return; }
+    currentMedia.info = info;
+    currentMedia.label = currentMedia.kind === 'tab' ? hostOf(tabUrl(currentMedia.tab)).replace(/^www\./, '') : (settings.data.sidebarApps.find(a => a.id === currentMedia.appId) || {}).title || 'Sidebar';
+    sendStateAll();
+  } catch {}
+}
+
+function mediaEvent(src, started) {
+  const wc = mediaSourceWc(src);
+  if (src.kind === 'tab' && src.tab.private) return; // incognito media isn't shown elsewhere
+  if (started || !currentMedia || mediaSourceWc(currentMedia) !== wc) {
+    if (started) currentMedia = { ...src, info: null, label: '' };
+  }
+  setTimeout(refreshMedia, 300);
+}
+setInterval(() => { if (currentMedia) refreshMedia(); }, 4000);
+
+async function mediaAction(w, action) {
+  if (!currentMedia) return;
+  const wc = mediaSourceWc(currentMedia);
+  if (!wc || wc.isDestroyed()) return;
+  if (action === 'focus') {
+    if (currentMedia.kind === 'tab') {
+      const t = currentMedia.tab;
+      if (t.popped && t.popWin) t.popWin.focus();
+      else { switchTab(t.w, t.id); t.w.win.focus(); }
+    } else { if (currentMedia.w.panelApp !== currentMedia.appId) togglePanel(currentMedia.w, currentMedia.appId); currentMedia.w.win.focus(); }
+    return;
+  }
+  const js = {
+    toggle: `(() => { const ms = [...document.querySelectorAll('video, audio')]; const m = ms.find(x => !x.paused) || ms.sort((a, b) => b.currentTime - a.currentTime)[0]; if (m) { m.paused ? m.play() : m.pause(); } })()`,
+    next: `(() => { const b = document.querySelector('ytmusic-player-bar .next-button, .ytp-next-button, .skipControl__next'); if (b) b.click(); })()`,
+    prev: `(() => { const b = document.querySelector('ytmusic-player-bar .previous-button, .ytp-prev-button, .skipControl__previous'); if (b) b.click(); })()`,
+  }[action];
+  if (js) { await wc.executeJavaScript(js, true).catch(() => {}); setTimeout(refreshMedia, 500); }
+}
+
+// ---------- YouTube: picture-in-picture when you switch away ----------
+
+function isYouTube(url) { try { return /(^|\.)youtube\.com$/.test(new URL(url).hostname) && !/^music\./.test(new URL(url).hostname); } catch { return false; } }
+function pipEnter(wc) {
+  wc.executeJavaScript(`(async () => { const v = [...document.querySelectorAll('video')].find(v => !v.paused); if (v && !document.pictureInPictureElement) { v.disablePictureInPicture = false; await v.requestPictureInPicture(); } })().catch(() => {})`, true).catch(() => {});
+}
+function pipExit(wc) {
+  wc.executeJavaScript(`document.pictureInPictureElement ? document.exitPictureInPicture().catch(() => {}) : 0`, true).catch(() => {});
+}
+
+// ---------- VR ----------
+// When a VR app is running (SteamVR, Quest Link, Virtual Desktop, VRChat, …), CloudBrowser
+// sleeps background tabs and does as little as possible, so the headset gets the power.
+
+const VR_PROCESSES = ['vrserver.exe', 'vrmonitor.exe', 'vrcompositor.exe', 'ovrserver_x64.exe', 'virtualdesktop.streamer.exe',
+  'vrchat.exe', 'alvr_dashboard.exe', 'mixedrealityportal.exe', 'pico connect.exe', 'steamvr_room_setup.exe'];
+let vrActive = false;
+let vrCheckBusy = false;
+
+function checkVr() {
+  if (process.platform !== 'win32' || vrCheckBusy) return;
+  if (settings.data.vrMode === 'off') { setVrActive(false); return; }
+  vrCheckBusy = true;
+  execFile('tasklist.exe', ['/fo', 'csv', '/nh'], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+    vrCheckBusy = false;
+    if (err) return;
+    const names = new Set(String(out).split(/\r?\n/).map(l => (l.split('","')[0] || '').replace(/^"/, '').toLowerCase()));
+    setVrActive(VR_PROCESSES.some(p => names.has(p)) || (SMOKE && fakeVr));
+  });
+}
+let fakeVr = false;
+
+function setVrActive(on) {
+  if (on === vrActive) return;
+  vrActive = on;
+  log('VR mode', on ? 'on' : 'off');
+  if (on) {
+    for (const t of allTabs()) {
+      if (t.id !== t.w.activeId && !t.pinned && !t.view.webContents.isCurrentlyAudible()) sleepTab(t);
+    }
+  }
+  sendStateAll();
+}
+
+// ---------- pop-out floating window ----------
+
+function popOutTab(t) {
+  if (!t || t.popped) return;
+  const w = t.w;
+  const idx = w.tabs.indexOf(t);
+  if (idx < 0) return;
+  // Take the page out of the window without reloading it (video keeps playing).
+  w.tabs.splice(idx, 1);
+  w.win.contentView.removeChildView(t.view);
+  if (!w.tabs.length) createTab(w, homeUrl());
+  else if (w.activeId === t.id) switchTab(w, w.tabs[Math.min(idx, w.tabs.length - 1)].id);
+  sendState(w);
+  saveSession();
+
+  const b = w.win.getBounds();
+  const pop = new BaseWindow({
+    width: 520, height: 320, x: b.x + b.width - 560, y: b.y + b.height - 360, minWidth: 220, minHeight: 140,
+    alwaysOnTop: true, title: t.view.webContents.getTitle() || 'CloudBrowser', icon: path.join(__dirname, 'ui', 'icon.png'),
+    autoHideMenuBar: true, backgroundColor: '#07101b',
+  });
+  pop.setAlwaysOnTop(true, 'floating');
+  t.popped = true;
+  t.popWin = pop;
+  t.view.setVisible(true);
+  pop.contentView.addChildView(t.view);
+  const fit = () => { const c = pop.getContentBounds(); t.view.setBounds({ x: 0, y: 0, width: c.width, height: c.height }); };
+  fit();
+  pop.on('resize', fit);
+  const onTitle = () => { if (!pop.isDestroyed()) pop.setTitle(t.view.webContents.getTitle() || 'CloudBrowser'); };
+  t.view.webContents.on('page-title-updated', onTitle);
+  pop.on('closed', () => {
+    t.view.webContents.removeListener('page-title-updated', onTitle);
+    t.popped = false; t.popWin = null;
+    // Put it back as a tab in a normal window.
+    if (quitting || t.view.webContents.isDestroyed()) { try { t.view.webContents.close(); } catch {} return; }
+    const target = windows.has(t.w) ? t.w : (t.private ? incognitoWindow() : normalWindow());
+    if (!target) return;
+    t.w = target;
+    target.tabs.push(t);
+    target.win.contentView.addChildView(t.view);
+    layout(target);
+    switchTab(target, t.id);
+    target.win.focus();
+  });
+  return pop;
+}
+
+function returnPoppedTab(t) { if (t && t.popWin && !t.popWin.isDestroyed()) t.popWin.close(); }
+
+// ---------- interface size (for VR desktop views or big screens) ----------
+
+function applyUiScale(w) {
+  const z = (settings.data.uiScale || 100) / 100;
+  try { w.ui.webContents.setZoomFactor(z); } catch {}
+  try { w.win.setTitleBarOverlay(titleBarColors(w.incognito)); } catch {}
+  sendState(w);
+}
+
 // ---------- sleeping tabs ----------
 
 function wakeTab(t) {
@@ -1664,7 +1993,7 @@ function sleepTab(t, force = false) {
 }
 
 function sleepIdleTabs() {
-  const mins = settings.data.sleepAfter;
+  const mins = vrActive ? 2 : settings.data.sleepAfter; // in VR, unused tabs sleep after 2 minutes
   if (!mins) return;
   const cutoff = Date.now() - mins * 60000;
   for (const t of allTabs()) {
@@ -1822,8 +2151,9 @@ function showContextMenu(tab, p) {
       if (items.length) { sep(); t.push(...items); sep(); }
     } catch (e) { log('extension menu items failed', e.message); }
   }
+  if (tab.popped) { sep(); t.push({ label: 'Put back into the browser', click: () => returnPoppedTab(tab) }); }
   t.push({ label: 'Inspect', click: () => wc.inspectElement(p.x, p.y) });
-  Menu.buildFromTemplate(t).popup({ window: w.win });
+  Menu.buildFromTemplate(t).popup({ window: tab.popped && tab.popWin ? tab.popWin : w.win });
 }
 
 async function savePage(w, wc) {
@@ -1864,6 +2194,7 @@ function showMainMenu(w) {
     { label: 'Reader mode', accelerator: 'F9', enabled: !!(t && t.readerable), click: () => openReader(t) },
     { label: 'Take screenshot', accelerator: 'Ctrl+Shift+S', enabled: !!wc, click: () => screenshot(w) },
     { label: 'Picture in picture', enabled: !!wc, click: () => pictureInPicture(wc) },
+    { label: 'Pop out tab (floating, always on top)', enabled: !!t, click: () => popOutTab(t) },
     { label: 'Print…', accelerator: 'Ctrl+P', enabled: !!wc, click: () => wc.print() },
     { label: 'Save page as…', enabled: !!wc, click: () => savePage(w, wc) },
     { label: 'Full screen', accelerator: 'F11', click: () => setFullscreen(w, !w.win.isFullScreen()) },
@@ -1890,6 +2221,8 @@ function showTabMenu(w, id) {
     { type: 'separator' },
     { label: 'Reload', click: () => wc.reload() },
     { label: 'Duplicate', click: () => createTab(w, tabUrl(t), { openerId: t.id }) },
+    { label: 'Pop out (floating, always on top)', click: () => popOutTab(t) },
+    ...(settings.data.sidebarAppsEnabled && !w.incognito && /^https?:/.test(tabUrl(t)) ? [{ label: 'Add to sidebar', click: () => addSidebarApp(t.view.webContents.getTitle() || hostOf(tabUrl(t)), tabUrl(t)) }] : []),
     { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => togglePin(t) },
     { label: 'Put tab to sleep', enabled: t.id !== w.activeId && !t.sleeping, click: () => sleepTab(t, true) },
     { label: 'Move to new window', enabled: w.tabs.length > 1, click: () => { const u = tabUrl(t); closeTab(id); createWindow({ incognito: w.incognito, urls: [u] }); } },
@@ -1936,6 +2269,9 @@ function setSetting(key, value) {
   if (key === 'shortcutsMode' && !['mostVisited', 'custom'].includes(value)) return false;
   if (key === 'sleepAfter' && ![0, 5, 15, 30, 60, 120].includes(value)) return false;
   if (key === 'passwordManager' && !['bitwarden', 'none'].includes(value)) return false;
+  if (key === 'vrMode' && !['auto', 'off'].includes(value)) return false;
+  if (key === 'uiScale' && ![100, 125, 150].includes(value)) return false;
+  if (key === 'sidebarWidth' && ![360, 440, 560].includes(value)) return false;
   if (key === 'shortcutsMode' && value === 'custom' && !settings.data.shortcuts.length) {
     settings.data.shortcuts = topSites().map(x => ({ title: x.title, url: x.url })); // start from what's showing now
   }
@@ -1945,6 +2281,10 @@ function setSetting(key, value) {
   if (key === 'theme') nativeTheme.themeSource = value;
   if (key === 'adblock') applyAdblock();
   if (key === 'passwordManager' && value === 'bitwarden') ensureBitwarden(true);
+  if (key === 'uiScale') for (const x of windows) applyUiScale(x);
+  if (key === 'sidebarWidth') for (const x of windows) layout(x);
+  if (key === 'sidebarAppsEnabled' && !value) for (const x of windows) closePanel(x);
+  if (key === 'vrMode') checkVr();
   if (key === 'incognitoScreenProtection') for (const x of windows) if (x.incognito) x.win.setContentProtection(value);
   sendStateAll();
   pagesSend('page:settings', settings.data);
@@ -2037,9 +2377,11 @@ uiOn('find', (w, text, opts) => {
 });
 uiOn('find-stop', w => { const wc = activeTab(w)?.view.webContents; if (wc) { wc.stopFindInPage('keepSelection'); wc.focus(); } });
 uiOn('page-rect', (w, r) => {
-  const x = Math.round(Number(r && r.x)), y = Math.round(Number(r && r.y));
-  if (!(x >= 0 && x < 800 && y > 0 && y < 400) || (x === w.pageX && y === w.pageY)) return;
-  w.pageX = x; w.pageY = y;
+  const z = (settings.data.uiScale || 100) / 100; // the UI reports CSS pixels; windows use device-independent ones
+  const x = Math.round(Number(r && r.x) * z), y = Math.round(Number(r && r.y) * z), rail = Math.round(Number(r && r.rail || 0) * z);
+  if (!(x >= 0 && x < 1200 && y > 0 && y < 600 && rail >= 0 && rail < 200)) return;
+  if (x === w.pageX && y === w.pageY && rail === w.railW) return;
+  w.pageX = x; w.pageY = y; w.railW = rail;
   layout(w);
 });
 uiOn('overlay', (w, open) => {
@@ -2056,6 +2398,10 @@ uiOn('store-install', async (w, id) => {
 uiOn('store-remove', async (w, id) => { await removeExtension(id); sendStateAll(); });
 uiOn('shield-menu', w => showShieldMenu(w));
 uiOn('translate-menu', w => showTranslateMenu(w));
+uiOn('sidebar-app', (w, id) => togglePanel(w, id));
+uiOn('sidebar-app-menu', (w, id) => showSidebarAppMenu(w, id));
+uiOn('sidebar-add-menu', w => showSidebarAddMenu(w));
+uiOn('media', (w, action) => mediaAction(w, action));
 uiOn('pin-extension', (_w, id) => {
   const list = settings.data.pinnedExtensions || [];
   settings.data.pinnedExtensions = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
@@ -2110,6 +2456,38 @@ uiOn('focus-page', w => activeTab(w)?.view.webContents.focus());
 uiOn('make-default', () => makeDefaultBrowser());
 uiOn('dismiss-default', () => { settings.data.defaultPromptDismissed = true; settings.save(); sendStateAll(); });
 ipcMain.handle('ui:vpn', () => (vpn ? vpn.info() : null));
+// SponsorBlock: ask with a 4-character hash prefix so the server can't tell which video it is.
+const sbCache = new Map();
+ipcMain.handle('yt-segments', async (e, videoId, categories) => {
+  if (!settings || !settings.data.sponsorBlock || !/^[\w-]{6,16}$/.test(String(videoId))) return [];
+  const cats = (Array.isArray(categories) ? categories : settings.data.sponsorCategories).filter(c => /^[a-z_]{3,20}$/.test(c));
+  const key = videoId + '|' + cats.join(',');
+  const hit = sbCache.get(key);
+  if (hit && Date.now() - hit.at < 15 * 60 * 1000) return hit.segs;
+  const prefix = require('crypto').createHash('sha256').update(String(videoId)).digest('hex').slice(0, 4);
+  const url = `https://sponsor.ajay.app/api/skipSegments/${prefix}?categories=${encodeURIComponent(JSON.stringify(cats))}&actionTypes=${encodeURIComponent('["skip"]')}`;
+  let segs = [];
+  try {
+    const r = await e.sender.session.fetch(url, { headers: { Accept: 'application/json' } });
+    if (r.ok) {
+      const all = await r.json();
+      const mine = Array.isArray(all) ? all.find(x => x.videoID === videoId) : null;
+      segs = mine ? mine.segments.filter(x => x.actionType === 'skip' && Array.isArray(x.segment))
+        .map(x => ({ start: Number(x.segment[0]), end: Number(x.segment[1]), category: x.category, uuid: x.UUID }))
+        .filter(x => x.end > x.start) : [];
+    }
+  } catch (err) { log('sponsorblock', err.message); }
+  sbCache.set(key, { at: Date.now(), segs });
+  if (sbCache.size > 200) sbCache.delete(sbCache.keys().next().value);
+  return segs;
+});
+// YouTube page scripts (preload-page.js) read their settings once per page.
+ipcMain.on('yt-settings', (e) => {
+  e.returnValue = settings ? {
+    sponsorBlock: settings.data.sponsorBlock, categories: settings.data.sponsorCategories,
+    hideShorts: settings.data.hideShorts,
+  } : null;
+});
 ipcMain.handle('ui:extensions', () => {
   if (!extensions) return [];
   const pinned = settings.data.pinnedExtensions || [];
@@ -2230,6 +2608,13 @@ pageHandle('install-update', () => { autoUpdater && autoUpdater.quitAndInstall()
 pageHandle('open-downloads-folder', () => { shell.openPath(app.getPath('downloads')); return true; });
 pageHandle('make-default', async () => { await makeDefaultBrowser(); return true; });
 pageHandle('extensions', () => listExtensions());
+pageHandle('set-sponsor-categories', (_ctx, cats) => {
+  const ok = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic', 'filler'];
+  settings.data.sponsorCategories = (Array.isArray(cats) ? cats : []).filter(c => ok.includes(c));
+  settings.save();
+  return settings.data.sponsorCategories;
+});
+pageHandle('vr-status', () => ({ active: vrActive, mode: settings.data.vrMode }));
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
 pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });
 pageHandle('install-bitwarden', async () => { settings.data.passwordManager = 'bitwarden'; settings.save(); await ensureBitwarden(true); return bitwardenInstalled(); });
@@ -2330,6 +2715,8 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     if (settings.data.vpnEnabled) vpn.ensure();
     setupPrivacyHeaders();
     setInterval(sleepIdleTabs, 60 * 1000);
+    setInterval(checkVr, 15 * 1000);
+    setTimeout(checkVr, 4000);
 
     await setupExtensions();
     startWindows(argUrl(process.argv));
@@ -2430,6 +2817,131 @@ async function smokeTest() {
     S('after entering email:', tabUrl(t).slice(0, 90), '|', JSON.stringify(txt.slice(0, 300)));
     S('blocked as insecure browser?', /may not be secure|Couldn.t sign you in/i.test(txt));
     await screen('google-signin');
+  });
+
+  await step('sidebar apps', async () => {
+    togglePanel(w, 'discord');
+    await wait(6000);
+    const pv = w.panelViews.get('discord');
+    S('sidebar: rail', w.railW, 'panel', JSON.stringify(pv && pv.getBounds()), 'page', JSON.stringify(t.view.getBounds()), 'url', pv && pv.webContents.getURL().slice(0, 60));
+    S('sidebar: rail buttons', await ui(w, `document.querySelectorAll('#rail-apps .rail-btn').length + ' open=' + !!document.querySelector('.rail-btn.open')`));
+    await screen('sidebar-discord');
+    togglePanel(w, 'ytmusic');
+    await wait(6000);
+    S('sidebar: switched to', w.panelApp, 'discord still alive', !w.panelViews.get('discord').webContents.isDestroyed());
+    await screen('sidebar-ytmusic');
+    togglePanel(w, 'ytmusic');
+    await wait(500);
+    S('sidebar: closed, page width', t.view.getBounds().width, 'win', w.win.getContentBounds().width);
+  });
+
+  let video = null;
+  await step('sponsorblock', async () => {
+    // Find a real video with a sponsor segment: any hash prefix returns some.
+    for (const prefix of ['a1b2', '0f3c', '7d4e', 'c0de']) {
+      const r = await session.fromPartition(NORMAL_PARTITION).fetch(`https://sponsor.ajay.app/api/skipSegments/${prefix}?categories=["sponsor"]`);
+      if (!r.ok) { S('sb api', prefix, r.status); continue; }
+      const all = await r.json();
+      const hit = all.map(v => ({ id: v.videoID, seg: v.segments.find(x => x.actionType === 'skip' && x.segment[0] > 20 && x.segment[0] < 400 && x.segment[1] - x.segment[0] > 8) })).find(v => v.seg && /^[\w-]{11}$/.test(v.id));
+      if (hit) { video = hit; break; }
+    }
+    S('sponsorblock test video', video && video.id, JSON.stringify(video && video.seg.segment));
+    if (!video) return;
+    const wc = t.view.webContents;
+    load(wc, 'https://www.youtube.com/watch?v=' + video.id);
+    await waitFor(() => !wc.isLoading(), 25000);
+    await wait(5000);
+    const [a, b] = video.seg.segment;
+    const r = await wc.executeJavaScript(`(async () => {
+      const v = document.querySelector('video'); if (!v) return 'no video';
+      v.muted = true; await v.play().catch(() => {});
+      for (let i = 0; i < 20 && document.querySelector('.html5-video-player.ad-showing'); i++) await new Promise(r => setTimeout(r, 1000));
+      v.currentTime = ${a} - 1.5; await v.play().catch(() => {});
+      await new Promise(r => setTimeout(r, 5000));
+      const toast = document.getElementById('cloud-sb-toast');
+      return JSON.stringify({ now: v.currentTime.toFixed(1), paused: v.paused, toast: toast && toast.textContent });
+    })()`, true).catch(e => 'ERR ' + e.message);
+    S('sponsorblock: segment', a, '→', b, '| after:', r, '| skipped?', (() => { try { return JSON.parse(r).now >= b - 1; } catch { return false; } })());
+    await screen('sponsorblock');
+  });
+
+  await step('media controls', async () => {
+    await wait(1500);
+    await refreshMedia();
+    S('media state', JSON.stringify(currentMedia && currentMedia.info));
+    await ui(w, `document.getElementById('media-btn').click()`);
+    await wait(800);
+    S('media panel', await ui(w, `JSON.stringify({ shown: !document.getElementById('media-panel').hidden, title: document.getElementById('mp-title').textContent })`));
+    await screen('media-panel');
+    await mediaAction(w, 'toggle');
+    await wait(1200);
+    S('media after toggle: playing =', currentMedia && currentMedia.info && currentMedia.info.playing);
+    await ui(w, `closeMediaPanel()`);
+    await mediaAction(w, 'toggle');
+    await wait(800);
+  });
+
+  await step('auto picture-in-picture', async () => {
+    if (!video) return;
+    const vt = t;
+    const playing = vt.view.webContents.isCurrentlyAudible() || await vt.view.webContents.executeJavaScript(`!document.querySelector('video').paused`);
+    // Muted videos aren't "audible", so unmute for the real check.
+    await vt.view.webContents.executeJavaScript(`(() => { const v = document.querySelector('video'); v.muted = false; v.volume = 0.05; return v.play(); })()`, true).catch(() => {});
+    await wait(2500);
+    S('pip: audible', vt.view.webContents.isCurrentlyAudible(), 'playing', playing);
+    const other = createTab(w, 'https://example.com/');
+    await wait(2500);
+    S('pip: after switching away, in PiP =', await vt.view.webContents.executeJavaScript('!!document.pictureInPictureElement'));
+    await screen('auto-pip');
+    switchTab(w, vt.id);
+    await wait(1500);
+    S('pip: after coming back, in PiP =', await vt.view.webContents.executeJavaScript('!!document.pictureInPictureElement'));
+    closeTab(other.id);
+  });
+
+  await step('shorts', async () => {
+    const wc = t.view.webContents;
+    load(wc, 'https://www.youtube.com/shorts/' + (video ? video.id : 'aqz-KE-bpKQ'));
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(4000);
+    S('shorts: ended up at', tabUrl(t).slice(0, 70), '| style present', await wc.executeJavaScript(`!!document.getElementById('cloud-no-shorts')`));
+    load(wc, 'https://www.youtube.com/results?search_query=minecraft');
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(5000);
+    S('shorts: visible shorts on search page', await wc.executeJavaScript(`[...document.querySelectorAll('a[href^="/shorts/"]')].filter(a => a.offsetParent).length`));
+    await screen('no-shorts');
+  });
+
+  await step('pop out', async () => {
+    const pt = createTab(w, 'https://en.wikipedia.org/wiki/Virtual_reality');
+    await wait(4000);
+    const before = w.tabs.length;
+    const pop = popOutTab(pt);
+    await wait(1500);
+    S('pop out: window', !!pop, 'on top', pop && pop.isAlwaysOnTop(), 'tabs', before, '→', w.tabs.length, 'bounds', JSON.stringify(pt.view.getBounds()));
+    await screen('pop-out');
+    pop.close();
+    await wait(1500);
+    S('pop out: back in window', w.tabs.includes(pt), 'active', w.activeId === pt.id, 'tabs', w.tabs.length);
+    closeTab(pt.id);
+  });
+
+  await step('vr mode', async () => {
+    const extra = [createTab(w, 'https://example.org/'), createTab(w, 'https://example.net/')];
+    await wait(3000);
+    switchTab(w, t.id);
+    fakeVr = true;
+    checkVr();
+    await wait(3000);
+    S('vr: active', vrActive, 'badge', await ui(w, `document.getElementById('vr-badge').classList.contains('show')`), 'background tabs asleep', extra.map(x => x.sleeping).join(','));
+    setSetting('uiScale', 150);
+    await wait(1500);
+    S('vr: ui scale 150, page rect', w.pageX, w.pageY, 'rail', w.railW, 'zoom', w.ui.webContents.getZoomFactor());
+    await screen('vr-big-ui');
+    setSetting('uiScale', 100);
+    fakeVr = false; checkVr();
+    await wait(2000);
+    S('vr: off again', !vrActive, 'page rect', w.pageX, w.pageY);
   });
 
   S('DONE');

@@ -113,3 +113,96 @@ if (location.hostname === 'accounts.google.com' || location.hostname === 'accoun
     else require('electron').webFrame.executeJavaScript(`(${disguise.toString()})(${JSON.stringify(full)})`);
   } catch (e) { console.error('sign-in compatibility failed', e); }
 }
+
+// ---------- Better YouTube: SponsorBlock skipping, no Shorts ----------
+// Runs in this preload's isolated world, so YouTube's own scripts can't see or break it.
+if (/^(www\.|m\.)?youtube\.com$/.test(location.hostname)) {
+  let cfg = null;
+  try { cfg = ipcRenderer.sendSync('yt-settings'); } catch {}
+  if (cfg) youtubeExtras(cfg);
+}
+
+function youtubeExtras(cfg) {
+  const LABEL = { sponsor: 'sponsor', selfpromo: 'self-promotion', interaction: '“like and subscribe” reminder', intro: 'intro', outro: 'end cards', preview: 'preview', music_offtopic: 'non-music part', filler: 'filler' };
+
+  // Shorts: hidden from feeds, and opened as normal videos (with a seek bar).
+  const shortsToWatch = () => {
+    const m = /^\/shorts\/([\w-]{6,})/.exec(location.pathname);
+    if (m) location.replace('/watch?v=' + m[1]);
+  };
+  if (cfg.hideShorts) {
+    shortsToWatch();
+    const css = `
+      ytd-reel-shelf-renderer, ytd-rich-shelf-renderer[is-shorts], ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
+      ytd-rich-section-renderer:has(ytm-shorts-lockup-view-model), grid-shelf-view-model:has(ytm-shorts-lockup-view-model),
+      ytd-guide-entry-renderer:has(a[title="Shorts"]), ytd-mini-guide-entry-renderer[aria-label="Shorts"],
+      ytd-video-renderer:has(a[href^="/shorts/"]), ytd-grid-video-renderer:has(a[href^="/shorts/"]),
+      ytd-rich-item-renderer:has(a[href^="/shorts/"]), ytd-compact-video-renderer:has(a[href^="/shorts/"]),
+      yt-tab-shape[tab-title="Shorts"], ytm-shorts-lockup-view-model, ytm-reel-shelf-renderer { display: none !important; }`;
+    const add = () => {
+      if (document.getElementById('cloud-no-shorts')) return;
+      const st = document.createElement('style');
+      st.id = 'cloud-no-shorts';
+      st.textContent = css;
+      (document.head || document.documentElement).append(st);
+    };
+    if (document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add);
+  }
+
+  // SponsorBlock: segments come from the main process, which asks the community database using
+  // only the first 4 characters of a hash of the video id, so it never learns what you watch.
+  let segments = [];
+  let forVideo = null;
+  let skipped = new Set();
+  let toastTimer = 0;
+  const videoId = () => (location.pathname === '/watch' ? new URLSearchParams(location.search).get('v') : null);
+
+  const toast = (text) => {
+    let el = document.getElementById('cloud-sb-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cloud-sb-toast';
+      el.style.cssText = 'position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:2147483647;padding:9px 16px;border-radius:8px;'
+        + 'background:#0c1624;color:#fff;font:600 13px system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none;transition:opacity .3s';
+      document.documentElement.append(el);
+    }
+    el.textContent = text;
+    el.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 2500);
+  };
+
+  const load = async () => {
+    if (cfg.hideShorts) shortsToWatch();
+    const id = videoId();
+    if (id === forVideo) return;
+    forVideo = id; segments = []; skipped = new Set();
+    if (!id || !cfg.sponsorBlock) return;
+    try {
+      const segs = await ipcRenderer.invoke('yt-segments', id, cfg.categories);
+      if (forVideo === id) segments = segs || [];
+    } catch {}
+  };
+
+  const onTime = (e) => {
+    const v = e.target;
+    if (!segments.length || !(v instanceof HTMLVideoElement) || videoId() !== forVideo) return;
+    // Ads play in the same <video>; YouTube marks the player while one is showing.
+    if (document.querySelector('.html5-video-player.ad-showing')) return;
+    const t = v.currentTime;
+    for (const s of segments) {
+      if (t >= s.start && t < s.end - 0.4 && !skipped.has(s.uuid)) {
+        skipped.add(s.uuid);
+        v.currentTime = Math.min(s.end, v.duration || s.end);
+        toast(`Skipped ${LABEL[s.category] || s.category}`);
+        break;
+      }
+    }
+  };
+
+  document.addEventListener('timeupdate', onTime, true);
+  document.addEventListener('yt-navigate-finish', load);
+  window.addEventListener('popstate', load);
+  setInterval(load, 1500); // backstop for navigations YouTube doesn't announce
+  load();
+}

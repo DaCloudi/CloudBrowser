@@ -54,7 +54,10 @@ function reportPageRect() {
   const side = $('sidebar');
   side.style.top = top + 'px';
   const x = document.body.classList.contains('vertical') ? Math.round(side.getBoundingClientRect().width) : 0;
-  cloud.setPageRect({ x, y: top });
+  const railEl = $('apprail');
+  railEl.style.top = top + 'px';
+  const rail = document.body.classList.contains('has-rail') ? Math.round(railEl.getBoundingClientRect().width) : 0;
+  cloud.setPageRect({ x, y: top, rail });
 }
 new ResizeObserver(reportPageRect).observe($('chrome'));
 new ResizeObserver(reportPageRect).observe($('sidebar'));
@@ -290,7 +293,7 @@ address.addEventListener('keydown', e => {
 });
 $('backdrop').addEventListener('mousedown', e => {
   e.preventDefault();
-  if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); return; }
+  if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); closeMediaPanel(); return; }
   closeOverlay(); editing = false; address.blur(); render(); cloud.focusPage();
 });
 
@@ -598,6 +601,9 @@ function render() {
   renderActions();
   $('ext-btn').classList.toggle('show', !!state.extensions);
   renderStoreBar();
+  renderRail();
+  renderMedia();
+  $('vr-badge').classList.toggle('show', !!state.vrActive);
   reportPageRect();
 
   $('back').disabled = !(tab && tab.canGoBack);
@@ -662,6 +668,94 @@ function render() {
   upd.classList.toggle('show', u.status === 'ready');
   if (u.status === 'ready') upd.textContent = `Update ${u.version} ready – restart`;
 }
+
+// ---------- sidebar apps (right rail) ----------
+
+const APP_LOOK = {
+  'discord.com': ['#5865f2', '<svg viewBox="0 0 24 24" class="fill"><path d="M19.3 5.3A16.6 16.6 0 0 0 15.2 4l-.5 1a15 15 0 0 0-5.4 0L8.8 4a16.5 16.5 0 0 0-4.1 1.3C2.1 9.2 1.4 13 1.7 16.7a16.7 16.7 0 0 0 5 2.5l1.1-1.7-1.8-.9.4-.3a11.9 11.9 0 0 0 11.2 0l.4.3-1.8.9 1.1 1.7a16.6 16.6 0 0 0 5-2.5c.4-4.3-.7-8-3-11.4zM8.7 14.5c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2zm6.6 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2z"/></svg>'],
+  'music.youtube.com': ['#ff0033', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path class="fill" d="M10 8.8v6.4l5.2-3.2z"/></svg>'],
+  'vrchat.com': ['#1b6b7c', '<svg viewBox="0 0 24 24"><path d="M3.5 9.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v4.5a2 2 0 0 1-2 2h-3.3l-1.7-2.2h-3l-1.7 2.2H5.5a2 2 0 0 1-2-2z"/></svg>'],
+  'www.youtube.com': ['#ff0033', '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="4"/><path class="fill" d="M10.3 9.3v5.4l4.5-2.7z"/></svg>'],
+  'www.twitch.tv': ['#9146ff', '<svg viewBox="0 0 24 24"><path d="M5 4h15v10l-4 4h-3.5L10 20.5V18H5zM11 8v4M15.5 8v4"/></svg>'],
+  'web.whatsapp.com': ['#25d366', '<svg viewBox="0 0 24 24"><path d="M4 20l1.3-4A8 8 0 1 1 8.4 19z"/></svg>'],
+};
+function railLook(url) {
+  try { const h = new URL(url).hostname; return APP_LOOK[h] || null; } catch { return null; }
+}
+let railKey = '';
+function renderRail() {
+  const sb = state.sidebar;
+  document.body.classList.toggle('has-rail', !!sb);
+  if (!sb) { railKey = ''; return; }
+  const key = JSON.stringify(sb);
+  if (key === railKey) return;
+  railKey = key;
+  $('rail-apps').replaceChildren(...sb.apps.map(a => {
+    const b = document.createElement('button');
+    b.className = 'rail-btn app' + (sb.open === a.id ? ' open' : '');
+    b.title = a.title + (sb.open === a.id ? ' (click to hide)' : '');
+    b.dataset.id = a.id;
+    const look = railLook(a.url);
+    if (look) { b.style.setProperty('--app', look[0]); b.innerHTML = look[1]; }
+    else {
+      b.style.setProperty('--app', `hsl(${[...a.title].reduce((h, c) => h + c.charCodeAt(0) * 37, 0) % 360} 55% 45%)`);
+      const l = document.createElement('span'); l.className = 'letter'; l.textContent = (a.title || '?').trim().charAt(0).toUpperCase();
+      b.append(l);
+    }
+    if (a.badge) { const d = document.createElement('span'); d.className = 'rail-badge'; d.textContent = a.badge > 0 ? (a.badge > 99 ? '99+' : a.badge) : ''; b.append(d); }
+    b.onclick = () => cloud.sidebarApp(a.id);
+    b.oncontextmenu = e => { e.preventDefault(); cloud.sidebarAppMenu(a.id); };
+    return b;
+  }));
+}
+$('rail-add').onclick = () => cloud.sidebarAddMenu();
+
+// ---------- now playing ----------
+
+const PLAY_ICON = '<svg viewBox="0 0 24 24" class="fill"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" class="fill"><rect x="6.5" y="5.5" width="4" height="13" rx="1"/><rect x="13.5" y="5.5" width="4" height="13" rx="1"/></svg>';
+function renderMedia() {
+  const m = state.media;
+  const btn = $('media-btn');
+  btn.classList.toggle('show', !!m);
+  btn.classList.toggle('playing', !!(m && m.playing));
+  if (m) btn.title = `${m.playing ? 'Playing' : 'Paused'}: ${m.title}${m.artist ? ' · ' + m.artist : ''}`;
+  if (!m) { closeMediaPanel(); return; }
+  $('mp-title').textContent = m.title || 'Untitled';
+  $('mp-artist').textContent = m.artist || '';
+  $('mp-source').textContent = m.sourceTitle || '';
+  const art = $('mp-art');
+  if (m.artwork && /^https:/.test(m.artwork)) {
+    if (art.dataset.src !== m.artwork) { art.dataset.src = m.artwork; art.style.backgroundImage = `url("${m.artwork.replace(/["\\]/g, '')}")`; }
+  } else { art.dataset.src = ''; art.style.backgroundImage = ''; }
+  art.classList.toggle('empty', !art.dataset.src);
+  $('mp-play').innerHTML = m.playing ? PAUSE_ICON : PLAY_ICON;
+  $('mp-prev').disabled = !m.canPrev;
+  $('mp-next').disabled = !m.canNext;
+}
+function openMediaPanel() {
+  const r = $('media-btn').getBoundingClientRect();
+  const panel = $('media-panel');
+  panel.style.top = (r.bottom + 8) + 'px';
+  panel.style.left = Math.max(8, Math.min(window.innerWidth - 328, r.right - 320)) + 'px';
+  panel.hidden = false;
+  $('media-btn').classList.add('open');
+  document.body.classList.add('panel');
+  cloud.setOverlay(true);
+}
+function closeMediaPanel() {
+  if ($('media-panel').hidden) return;
+  $('media-panel').hidden = true;
+  $('media-btn').classList.remove('open');
+  document.body.classList.remove('panel');
+  cloud.setOverlay(false);
+}
+$('media-btn').onclick = () => ($('media-panel').hidden ? openMediaPanel() : closeMediaPanel());
+$('mp-play').onclick = () => cloud.media('toggle');
+$('mp-prev').onclick = () => cloud.media('prev');
+$('mp-next').onclick = () => cloud.media('next');
+$('mp-goto').onclick = () => { closeMediaPanel(); cloud.media('focus'); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMediaPanel(); });
 
 // Opening the suggestions makes this view taller, so only react to width changes.
 let lastWidth = window.innerWidth;
