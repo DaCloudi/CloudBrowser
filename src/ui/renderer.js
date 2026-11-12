@@ -75,6 +75,89 @@ function renderStoreBar() {
   $('store-btn').disabled = storeBusy;
 }
 
+// ---------- extensions "folder" ----------
+// The toolbar only shows pinned extensions; everything is in the puzzle-piece panel.
+// Opening an unpinned extension shows its button in the toolbar while its popup is open.
+let tempShown = null;
+
+function actionElements() {
+  if (!actionList || !actionList.shadowRoot) return [];
+  return [...actionList.shadowRoot.querySelectorAll('*')].filter(e => (e.getAttribute('part') || '').split(/\s+/).includes('action'));
+}
+function actionExtensionId(el) {
+  for (const a of el.attributes) { const m = /[a-p]{32}/.exec(a.value); if (m) return m[0]; }
+  for (const v of Object.values(el.dataset || {})) { const m = /[a-p]{32}/.exec(v); if (m) return m[0]; }
+  const bg = getComputedStyle(el).backgroundImage || '';
+  const m = /[a-p]{32}/.exec(bg) || /[a-p]{32}/.exec(el.innerHTML || '');
+  return m ? m[0] : null;
+}
+function filterActions() {
+  const pinned = new Set((state && state.pinnedExtensions) || []);
+  for (const el of actionElements()) {
+    const id = actionExtensionId(el);
+    el.style.display = (id && (pinned.has(id) || id === tempShown)) ? '' : 'none';
+  }
+}
+let actionObserver = null;
+function watchActions() {
+  if (actionObserver || !actionList || !actionList.shadowRoot) return;
+  actionObserver = new MutationObserver(() => filterActions());
+  actionObserver.observe(actionList.shadowRoot, { childList: true, subtree: true });
+  filterActions();
+}
+window.addEventListener('focus', () => { if (tempShown) { tempShown = null; filterActions(); } });
+
+async function openExtPanel() {
+  const r = $('ext-btn').getBoundingClientRect();
+  const panel = $('ext-panel');
+  panel.style.top = (r.bottom + 8) + 'px';
+  panel.style.left = Math.max(8, Math.min(window.innerWidth - 328, r.right - 320)) + 'px';
+  const list = await cloud.extensionList();
+  $('ep-empty').hidden = list.length > 0;
+  $('ep-list').replaceChildren(...list.map(x => {
+    const row = document.createElement('div');
+    row.className = 'ep-row';
+    row.title = `Open ${x.name}`;
+    let icon;
+    if (x.icon) { icon = document.createElement('img'); icon.src = x.icon; } else { icon = document.createElement('span'); icon.className = 'ep-ph'; }
+    const name = document.createElement('span');
+    name.className = 'ep-name';
+    name.textContent = x.name;
+    const pin = document.createElement('button');
+    pin.className = x.pinned ? 'on' : '';
+    pin.title = x.pinned ? 'Unpin from toolbar' : 'Pin to toolbar';
+    pin.innerHTML = ICONS.pin;
+    pin.onclick = e => { e.stopPropagation(); cloud.pinExtension(x.id); x.pinned = !x.pinned; pin.className = x.pinned ? 'on' : ''; pin.title = x.pinned ? 'Unpin from toolbar' : 'Pin to toolbar'; };
+    row.onclick = () => openExtension(x.id);
+    row.append(icon, name, pin);
+    return row;
+  }));
+  panel.hidden = false;
+  $('ext-btn').classList.add('open');
+  document.body.classList.add('panel');
+  cloud.setOverlay(true);
+}
+function closeExtPanel() {
+  if ($('ext-panel').hidden) return;
+  $('ext-panel').hidden = true;
+  $('ext-btn').classList.remove('open');
+  document.body.classList.remove('panel');
+  cloud.setOverlay(false);
+}
+function openExtension(id) {
+  closeExtPanel();
+  tempShown = id;
+  filterActions();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const el = actionElements().find(e => actionExtensionId(e) === id);
+    if (el) el.click(); else cloud.manageExtensions();
+  }));
+}
+$('ext-btn').onclick = () => ($('ext-panel').hidden ? openExtPanel() : closeExtPanel());
+$('ep-manage').onclick = () => { closeExtPanel(); cloud.manageExtensions(); };
+$('ep-store').onclick = () => { closeExtPanel(); cloud.openWebStore(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeExtPanel(); });
+
 // Chrome extension buttons
 let actionList = null;
 function renderActions() {
@@ -85,6 +168,8 @@ function renderActions() {
     actionList.setAttribute('alignment', 'bottom left');
     $('actions-slot').append(actionList);
   }
+  watchActions();
+  filterActions();
   if (actionList && state.activeWcId && actionList.getAttribute('tab') !== String(state.activeWcId)) {
     actionList.setAttribute('tab', String(state.activeWcId));
   }
@@ -201,7 +286,7 @@ address.addEventListener('keydown', e => {
 });
 $('backdrop').addEventListener('mousedown', e => {
   e.preventDefault();
-  if (document.body.classList.contains('panel')) { closeVpnPanel(); return; }
+  if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); return; }
   closeOverlay(); address.blur(); cloud.focusPage();
 });
 
@@ -469,6 +554,7 @@ function render() {
   renderTabs();
   renderBookmarksBar();
   renderActions();
+  $('ext-btn').classList.toggle('show', !!state.extensions);
   renderStoreBar();
   reportPageRect();
 

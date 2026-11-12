@@ -50,6 +50,8 @@
       </div>
 
       <span id="actions-slot"></span>
+      <button id="ext-btn" class="icon" title="Extensions">
+        <svg viewBox="0 0 24 24"><path d="M9 4h4v2.5a1.5 1.5 0 0 0 3 0V4a2 2 0 0 1 2 2v3h-2.5a1.5 1.5 0 0 0 0 3H18v6a2 2 0 0 1-2 2h-3v-2.5a1.5 1.5 0 0 0-3 0V20H6a2 2 0 0 1-2-2v-4h2.5a1.5 1.5 0 0 0 0-3H4V6a2 2 0 0 1 2-2z"/></svg></button>
       <button id="vpn-btn" class="vpn-pill" title="CloudBrowser VPN">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>
         <span id="vpn-label">VPN</span></button>
@@ -105,6 +107,18 @@
   </aside>
 
   <div id="backdrop"></div>
+
+  <div id="ext-panel" hidden>
+    <div class="ep-head">Extensions</div>
+    <div id="ep-list"></div>
+    <p id="ep-empty" class="vp-note" hidden>No extensions yet. Add some from the Chrome Web Store.</p>
+    <div class="ep-foot">
+      <button id="ep-store" class="ep-link">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Get extensions</button>
+      <button id="ep-manage" class="ep-link">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2"/><circle cx="12" cy="12" r="6.6"/></svg>Manage extensions</button>
+    </div>
+  </div>
 
   <div id="vpn-panel" hidden>
     <div class="vp-head">

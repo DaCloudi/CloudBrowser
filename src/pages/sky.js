@@ -1,20 +1,13 @@
-// Home page sky: time-of-day colours, soft procedurally drawn clouds drifting in three layers,
-// and stars at night.
+// Home page sky: soft procedurally drawn clouds drifting slowly in three layers.
 'use strict';
 (() => {
   const body = document.body;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const darkTheme = matchMedia('(prefers-color-scheme: dark)');
 
-  const forced = new URLSearchParams(location.search).get('time');
   function timeOfDay() {
-    if (['dawn', 'day', 'dusk', 'night'].includes(forced)) return forced;
-    if (body.classList.contains('incognito') || darkTheme.matches) return 'night';
-    const h = new Date().getHours() + new Date().getMinutes() / 60;
-    if (h >= 5.5 && h < 8) return 'dawn';
-    if (h >= 8 && h < 17.5) return 'day';
-    if (h >= 17.5 && h < 20) return 'dusk';
-    return 'night';
+    if (body.classList.contains('incognito')) return 'incognito';
+    return darkTheme.matches ? 'dark' : 'light';
   }
 
   // Seeded random so the clouds don't change shape every time something re-renders.
@@ -22,10 +15,9 @@
   const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 
   const TINTS = {
-    dawn: { light: [255, 246, 244], shade: [222, 170, 190], alpha: 0.95 },
-    day: { light: [255, 255, 255], shade: [176, 196, 228], alpha: 0.95 },
-    dusk: { light: [255, 226, 210], shade: [168, 120, 160], alpha: 0.9 },
-    night: { light: [120, 138, 176], shade: [40, 52, 86], alpha: 0.38 },
+    light: { light: [255, 255, 255], shade: [188, 206, 232], alpha: 0.9 },
+    dark: { light: [120, 140, 180], shade: [40, 52, 80], alpha: 0.28 },
+    incognito: { light: [140, 120, 190], shade: [40, 30, 66], alpha: 0.2 },
   };
 
   // Draw one cloud: lots of overlapping soft puffs, lit from above, shaded underneath.
@@ -69,9 +61,9 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     const tint = TINTS[time];
     const layers = [
-      { count: 5, size: 0.55, top: [0.04, 0.35], speed: 260, opacity: 0.65 },
-      { count: 4, size: 0.85, top: [0.10, 0.60], speed: 180, opacity: 0.85 },
-      { count: 3, size: 1.25, top: [0.45, 0.85], speed: 120, opacity: 1 },
+      { count: 3, size: 0.6, top: [0.06, 0.35], speed: 280, opacity: 0.55 },
+      { count: 3, size: 0.9, top: [0.20, 0.65], speed: 200, opacity: 0.75 },
+      { count: 2, size: 1.2, top: [0.55, 0.88], speed: 140, opacity: 0.9 },
     ];
     for (const L of layers) {
       for (let i = 0; i < L.count; i++) {
@@ -94,31 +86,11 @@
     }
   }
 
-  function buildStars() {
-    const box = document.getElementById('stars');
-    if (box.childElementCount) return;
-    seed = 3;
-    for (let i = 0; i < 90; i++) {
-      const s = document.createElement('div');
-      s.className = 'star';
-      s.style.left = (rnd() * 100) + '%';
-      s.style.top = (rnd() * 100) + '%';
-      const size = rnd() < 0.85 ? 1.5 : 2.5;
-      s.style.width = s.style.height = size + 'px';
-      s.style.opacity = String(0.4 + rnd() * 0.6);
-      s.style.animationDelay = (-rnd() * 3.5) + 's';
-      s.style.animationDuration = (2.5 + rnd() * 3) + 's';
-      box.append(s);
-    }
-  }
-
   let current = null;
   function render(force) {
     const time = timeOfDay();
     if (time === current && !force) return;
     current = time;
-    body.dataset.time = time;
-    if (time === 'night') buildStars();
     buildClouds(time);
   }
 
@@ -127,5 +99,4 @@
   let resizeTimer;
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => render(true), 250); });
   darkTheme.addEventListener('change', () => render(true));
-  setInterval(() => render(false), 60000);
 })();
