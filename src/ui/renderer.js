@@ -22,7 +22,10 @@ $('newtab').onclick = () => cloud.newTab();
 $('back').onclick = () => cloud.back();
 $('forward').onclick = () => cloud.forward();
 $('home').onclick = () => cloud.home();
-$('private').onclick = () => cloud.togglePrivate();
+$('incognito').onclick = () => cloud.newIncognito();
+$('make-default').onclick = () => cloud.makeDefault();
+$('dismiss-default').onclick = () => cloud.dismissDefault();
+if (new URLSearchParams(location.search).get('incognito') === '1') document.body.classList.add('incognito');
 $('menu').onclick = () => cloud.menu();
 $('update').onclick = () => cloud.installUpdate();
 $('star').onclick = () => cloud.toggleBookmark();
@@ -200,7 +203,7 @@ cloud.onState(s => { state = s; render(); });
 function activeTab() { return state && state.tabs.find(t => t.id === state.activeId); }
 
 function displayUrl(url) {
-  if (!url || url === 'about:blank' || url.startsWith('data:')) return '';
+  if (!url || url === 'about:blank' || url.startsWith('data:') || url.startsWith('cloud://newtab')) return '';
   return url;
 }
 
@@ -218,7 +221,7 @@ function renderTabs() {
   strip.replaceChildren(...state.tabs.map(t => {
     const el = document.createElement('div');
     el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow ? ' narrow' : '');
-    el.title = t.title + (t.private ? ' (private)' : '');
+    el.title = t.title;
     el.onmousedown = e => {
       if (e.button === 0) cloud.switchTab(t.id);
       if (e.button === 1) e.preventDefault();
@@ -247,7 +250,6 @@ function renderTabs() {
     title.textContent = t.title;
     el.append(title);
 
-    if (t.private) { const d = document.createElement('span'); d.className = 'private-dot'; el.append(d); }
     if (t.audible || t.muted) {
       const a = document.createElement('button');
       a.className = 'audio';
@@ -319,9 +321,8 @@ function render() {
   $('forward').disabled = !(tab && tab.canGoForward);
   $('reload').classList.toggle('loading', !!(tab && tab.loading));
   $('reload').title = tab && tab.loading ? 'Stop (Esc)' : 'Reload (F5)';
-  $('private').classList.toggle('on', state.privateMode);
-  $('private').title = state.privateMode ? 'Private mode is ON for new tabs (Ctrl+Shift+P)' : 'Private mode for new tabs (Ctrl+Shift+P)';
-  document.body.classList.toggle('private-mode', !!(tab && tab.private));
+  document.body.classList.toggle('incognito', !!state.incognito);
+  $('defaultbar').hidden = !state.defaultBanner;
 
   const url = tab ? tab.url : '';
   if (!editing) address.value = displayUrl(url);
@@ -331,7 +332,7 @@ function render() {
   $('siteicon').title = { secure: 'Secure connection', insecure: 'Not secure: this site doesn’t use HTTPS', internal: 'CloudBrowser page', search: '' }[kind];
 
   const star = $('star');
-  star.disabled = !tab || !/^(https?|cloud|file):/.test(url);
+  star.disabled = !tab || !/^(https?|cloud|file):/.test(url) || url.startsWith('cloud://newtab');
   star.classList.toggle('on', !!(tab && tab.bookmarked));
   star.title = tab && tab.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
 

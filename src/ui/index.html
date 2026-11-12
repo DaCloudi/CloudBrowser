@@ -13,6 +13,10 @@
       <div id="tabs"></div>
       <button id="newtab" class="icon" title="New tab (Ctrl+T)">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="grow"></div>
+      <div id="incog-badge">
+        <svg viewBox="0 0 24 24"><path d="M3 10h18M6 10l2-5h8l2 5"/><circle cx="7.5" cy="15" r="3"/><circle cx="16.5" cy="15" r="3"/><path d="M10.5 15h3"/></svg>
+        Incognito</div>
     </div>
 
     <div id="toolbar">
@@ -45,10 +49,17 @@
         <span id="dl-ring"></span>
         <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg></button>
       <button id="update" title="Restart to finish updating">Update ready – restart</button>
-      <button id="private" class="icon" title="Private mode for new tabs (Ctrl+Shift+P)">
+      <button id="incognito" class="icon" title="New incognito window (Ctrl+Shift+N)">
         <svg viewBox="0 0 24 24"><path d="M3 10h18M6 10l2-5h8l2 5"/><circle cx="7.5" cy="15" r="3"/><circle cx="16.5" cy="15" r="3"/><path d="M10.5 15h3"/></svg></button>
       <button id="menu" class="icon" title="Menu">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+    </div>
+
+    <div id="defaultbar" hidden>
+      <img src="icon.png" alt="">
+      <span>CloudBrowser isn’t your default browser. Make it the default so links from other apps open here.</span>
+      <button id="make-default" class="pill-btn primary">Make default</button>
+      <button id="dismiss-default" class="pill-btn">Don’t ask again</button>
     </div>
 
     <div id="bookmarksbar"></div>

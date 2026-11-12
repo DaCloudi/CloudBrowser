@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline';">
+  <meta name="color-scheme" content="light dark">
+  <title>New tab</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/newtab.css">
+</head>
+<body>
+  <div class="sky" aria-hidden="true">
+    <div class="cloud c1"></div><div class="cloud c2"></div><div class="cloud c3"></div><div class="cloud c4"></div>
+  </div>
+
+  <main>
+    <div class="brand">
+      <img src="/icon.png" alt="">
+      <h1 id="greeting">CloudBrowser</h1>
+    </div>
+
+    <form id="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+      <input id="q" type="text" autocomplete="off" spellcheck="false" placeholder="Search DuckDuckGo or type a web address">
+      <button type="submit" title="Search">
+        <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+
+    <section id="sites"></section>
+
+    <section id="incognito-info" hidden>
+      <h2>You’re incognito</h2>
+      <p>Nothing you do in this window is saved on this computer. When you close all incognito windows, CloudBrowser forgets:</p>
+      <ul>
+        <li>the pages you visited and what you searched for</li>
+        <li>cookies and site data, so you’re signed out of everything</li>
+        <li>anything you typed into forms, and site permissions</li>
+      </ul>
+      <p class="muted">Downloads and bookmarks you make are kept. Websites, your employer or school, and your internet provider can still see what you do.</p>
+    </section>
+  </main>
+
+  <footer>
+    <span id="stat"></span>
+    <a id="restore" href="#" hidden>Restore hidden sites</a>
+  </footer>
+
+  <script src="/newtab.js"></script>
+</body>
+</html>

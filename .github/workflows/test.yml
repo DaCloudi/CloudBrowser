@@ -28,15 +28,22 @@ jobs:
           cat "$CLOUD_SMOKE_LOG"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
 
-      - name: Build the app (no installer)
-        run: npx electron-builder --win --dir --publish never
+      - name: Build the installer
+        run: npx electron-builder --win --publish never
 
-      - name: Run the packaged app
+      - name: Install it like a user would
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist\CloudBrowser-Setup-*.exe | Select-Object -First 1
+          Start-Process $exe.FullName -ArgumentList '/S' -Wait
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\CloudBrowser" | Select-Object Name
+
+      - name: Run the installed app
         shell: bash
         env:
           CLOUD_SMOKE: '1'
           CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-packaged.log
         run: |
-          timeout 240 ./dist/win-unpacked/CloudBrowser.exe || true
+          timeout 240 "$LOCALAPPDATA/Programs/CloudBrowser/CloudBrowser.exe" || true
           cat "$CLOUD_SMOKE_LOG" | grep -v "^\[SHOT"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"

@@ -16,12 +16,19 @@
   <main>
     <h1>Settings</h1>
 
+    <section id="default">
+      <h2>Default browser</h2>
+      <div class="row"><div><div class="label" id="defaultStatus">Checking…</div>
+        <div class="hint" id="defaultHint">Links you click in other apps, and web pages you open from File Explorer, will open in CloudBrowser.</div></div>
+        <button id="makeDefault" class="btn primary" hidden>Make default</button></div>
+    </section>
+
     <section id="search">
       <h2>Search &amp; home page</h2>
       <div class="row"><div><div class="label">Search engine</div><div class="hint">Used when you type something that isn’t a web address.</div></div>
         <select id="searchEngine"></select></div>
       <div class="row"><div><div class="label">Home page</div><div class="hint">Opens in new tabs and with the ⌂ button.</div></div>
-        <div class="inline"><input id="homePage" type="text" spellcheck="false"><button id="homeReset" class="btn">Use search engine</button></div></div>
+        <div class="inline"><input id="homePage" type="text" spellcheck="false"><button id="homeCloud" class="btn">CloudBrowser home</button><button id="homeReset" class="btn">Search engine</button></div></div>
     </section>
 
     <section id="startup">

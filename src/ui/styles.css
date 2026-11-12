@@ -35,11 +35,12 @@
     color-scheme: dark;
   }
 }
-body.private-mode {
-  --strip: #e3dcf6; --tab-active: #f7f4ff; --bar: #f7f4ff; --accent: var(--private); --field: #ece7fa;
-}
-@media (prefers-color-scheme: dark) {
-  body.private-mode { --strip: #1b1726; --tab-active: #2a2438; --bar: #2a2438; --field: #1f1a2b; }
+/* Incognito windows: always dark purple */
+body.incognito {
+  --strip: #15111e; --bar: #241d33; --tab-hover: rgba(255,255,255,.06); --tab-active: #241d33;
+  --text: #ece6fb; --muted: #a497c4; --line: #352b4a; --field: #1a1526; --field-focus: #1a1526;
+  --hover: #33294a; --accent: #a58bf5; --popup: #2a223b; --popup-shadow: 0 10px 30px rgba(0,0,0,.55);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -136,7 +137,6 @@ button.icon.small svg { width: 16px; height: 16px; }
 #downloads.bounce { animation: bounce .6s ease 2; }
 @keyframes bounce { 50% { transform: translateY(3px); } }
 
-#private.on { background: var(--private); color: #fff; }
 
 #update {
   display: none; height: 30px; padding: 0 12px; margin: 0 4px; border: 0; border-radius: 15px;
@@ -189,3 +189,23 @@ body.overlay #backdrop, body.overlay #suggestions { display: block; }
 .sg .u:empty { display: none; }
 .sg b { font-weight: 600; }
 
+
+.grow { flex: 1; }
+#incog-badge {
+  display: none; align-items: center; gap: 7px; height: 28px; margin: 0 6px 5px; padding: 0 12px;
+  border-radius: 14px; background: #3b2f57; color: #e5dcff; font-weight: 600; flex: none;
+}
+#incog-badge svg { width: 17px; height: 17px; }
+body.incognito #incog-badge { display: flex; }
+body.incognito #incognito { display: none; }
+
+#defaultbar { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 14px 6px; }
+#defaultbar[hidden] { display: none; }
+#defaultbar img { width: 20px; height: 20px; }
+#defaultbar span { flex: 1; min-width: 0; }
+.pill-btn {
+  height: 28px; padding: 0 14px; border-radius: 14px; border: 1.5px solid var(--line);
+  background: transparent; color: var(--text); white-space: nowrap;
+}
+.pill-btn:hover { background: var(--hover); }
+.pill-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

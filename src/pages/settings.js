@@ -12,6 +12,7 @@ async function load() {
   $('version').textContent = info.version;
   $('engineVersions').textContent = `Chromium ${info.chrome} · Electron ${info.electron}`;
   renderAdblockHint(s);
+  renderDefault(info.isDefaultBrowser);
   renderUpdate(info.update);
   renderPermissions();
 }
@@ -30,6 +31,16 @@ function renderAdblockHint(s) {
   $('adblockHint').textContent = !info.adblockAvailable
     ? 'The blocker couldn’t start. It will try again next time CloudBrowser opens.'
     : `${(s.blockedTotal || 0).toLocaleString()} ads and trackers blocked so far.`;
+}
+
+function renderDefault(isDefault) {
+  if (!info.windows || !info.packaged || isDefault == null) {
+    $('defaultStatus').textContent = 'Only available in the installed app on Windows.';
+    $('makeDefault').hidden = true;
+    return;
+  }
+  $('defaultStatus').textContent = isDefault ? 'CloudBrowser is your default browser ✓' : 'CloudBrowser isn’t your default browser';
+  $('makeDefault').hidden = !!isDefault;
 }
 
 function renderUpdate(u) {
@@ -65,6 +76,13 @@ const set = (key, value) => cloud.call('set-setting', key, value);
 
 $('searchEngine').onchange = e => set('searchEngine', e.target.value);
 $('homePage').onchange = async e => { await set('homePage', e.target.value); load(); };
+$('homeCloud').onclick = async () => { await set('homePage', 'cloud://newtab/'); load(); };
+$('makeDefault').onclick = async () => {
+  await cloud.call('make-default');
+  $('defaultHint').textContent = 'In the Windows Settings window that opened, choose CloudBrowser for “Web browser”, or click “Set default”. Then come back here.';
+};
+window.addEventListener('focus', async () => { if (info) renderDefault(await cloud.call('check-default')); });
+cloud.on('default-browser', v => renderDefault(v));
 $('homeReset').onclick = async () => {
   const e = info.engines.find(x => x.id === $('searchEngine').value);
   await set('homePage', e ? e.home : 'https://duckduckgo.com/');
