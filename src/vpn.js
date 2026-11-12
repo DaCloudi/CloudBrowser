@@ -159,7 +159,7 @@ class Vpn {
       const proc = spawn(exe, ['-f', rc], { cwd: dir, windowsHide: true });
       this.proc = proc;
       let done = false;
-      const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('Tor took too long to connect. Check your internet connection.')); } }, 120000);
+      const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('Tor took too long to connect. Check your internet connection.')); } }, 240000);
       const onData = (buf) => {
         for (const line of String(buf).split(/\r?\n/)) {
           const m = /Bootstrapped (\d+)%/.exec(line);
