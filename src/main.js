@@ -1448,6 +1448,21 @@ function siteOf(host) {
   return /^(co|com|org|net|gov|ac|edu)\.[a-z]{2}$/.test(two) ? parts.slice(-3).join('.') : two;
 }
 
+// Google refuses sign-in from browsers built on Electron ("This browser or app may not be
+// secure"), but supports Firefox. So on Google's sign-in pages only, CloudBrowser presents
+// itself as current Firefox (request headers here, page-visible values in preload-page.js).
+function firefoxVersion() {
+  // Firefox ships every 4 weeks; 128 was released on 9 July 2024.
+  return 128 + Math.max(0, Math.floor((Date.now() - Date.UTC(2024, 6, 9)) / (28 * 86400000)));
+}
+function firefoxUserAgent() {
+  const v = firefoxVersion();
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${v}.0) Gecko/20100101 Firefox/${v}.0`;
+}
+function isGoogleSignIn(url) {
+  try { const h = new URL(url).hostname; return h === 'accounts.google.com' || h === 'accounts.youtube.com'; } catch { return false; }
+}
+
 // "Do not sell or share my data" signals, and less revealing referrers. Incognito never tells
 // another site which page you came from.
 function setupPrivacyHeaders() {
@@ -1455,6 +1470,10 @@ function setupPrivacyHeaders() {
     session.fromPartition(p).webRequest.onBeforeSendHeaders((details, callback) => {
       const h = details.requestHeaders;
       if (settings.data.sendGpc) { h['Sec-GPC'] = '1'; h['DNT'] = '1'; }
+      if (isGoogleSignIn(details.url)) {
+        for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k) || /^user-agent$/i.test(k)) delete h[k];
+        h['User-Agent'] = firefoxUserAgent();
+      }
       const ref = h.Referer || h.referer;
       if (ref) {
         try {
@@ -2363,35 +2382,23 @@ async function smokeTest() {
 
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
 
-  await step('bitwarden default', async () => {
-    const ok = await waitFor(() => bitwardenInstalled() && settings.data.bitwardenSetupDone, 90000);
-    S('bitwarden auto-installed', ok, 'pinned', (settings.data.pinnedExtensions || []).includes(BITWARDEN_ID), 'manager', settings.data.passwordManager, 'user language', userLanguage());
-    await wait(2000);
-    openBitwarden(w);
-    await wait(4000);
-    await screen('bitwarden-shortcut');
-    w.win.focus();
+  await step('google sign-in', async () => {
+    S('firefox UA used for Google sign-in', firefoxUserAgent());
+    const wc = t.view.webContents;
+    load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(3000);
+    S('page sees', await wc.executeJavaScript(`JSON.stringify({ ua: navigator.userAgent, uad: typeof navigator.userAgentData, vendor: navigator.vendor })`));
+    await wc.executeJavaScript(`document.querySelector('#identifierId') && document.querySelector('#identifierId').focus()`);
+    await wait(500);
+    wc.insertText('cloudbrowser.signin.test.4821@gmail.com');
     await wait(800);
-  });
-
-  await step('translate', async () => {
-    load(t.view.webContents, 'https://fr.wikipedia.org/wiki/Nuage');
-    await waitFor(() => !t.view.webContents.isLoading(), 20000);
-    await wait(2500);
-    S('page language', t.pageLang, 'translatable', tabInfo(t).translatable, 'title', t.view.webContents.getTitle());
-    await screen('french-page');
-    translateTab(t);
-    await waitFor(() => isTranslated(tabUrl(t)) && !t.view.webContents.isLoading(), 30000);
-    await wait(4000);
-    S('translated url', tabUrl(t).slice(0, 120), 'title', t.view.webContents.getTitle(), 'back to original ->', originalUrl(tabUrl(t)).slice(0, 80));
-    await screen('translated');
-    S('url round trip', originalUrl(translatedUrl('https://sub-domain.example.co.uk/a/b?x=1#h', 'en')));
-  });
-
-  await step('home + logo', async () => {
-    load(t.view.webContents, NEWTAB_URL);
-    await wait(2000);
-    await screen('home');
+    await wc.executeJavaScript(`(document.querySelector('#identifierNext button') || document.querySelector('#identifierNext')).click()`).catch(() => {});
+    await wait(7000);
+    const txt = await wc.executeJavaScript('document.body.innerText').catch(e => 'ERR ' + e.message);
+    S('after entering email:', tabUrl(t).slice(0, 90), '|', JSON.stringify(txt.slice(0, 300)));
+    S('blocked as insecure browser?', /may not be secure|Couldn.t sign you in/i.test(txt));
+    await screen('google-signin');
   });
 
   S('DONE');
