@@ -272,7 +272,7 @@ function pagesSend(channel, data) {
 function sendState(w) {
   if (!w || w.stateQueued) return;
   w.stateQueued = true;
-  setTimeout(() => { w.stateQueued = false; pushState(w); }, 16);
+  setTimeout(() => { w.stateQueued = false; pushState(w); }, 33);
 }
 function sendStateAll() { for (const w of windows) sendState(w); }
 
@@ -518,7 +518,11 @@ function wireTab(tab) {
   const update = () => sendState(tab.w);
 
   wc.on('did-start-loading', update);
-  wc.on('did-stop-loading', () => { update(); saveSession(); checkReaderable(tab); detectLanguage(tab); });
+  wc.on('did-stop-loading', () => {
+    update();
+    saveSession();
+    setTimeout(() => { if (!wc.isDestroyed() && !wc.isLoading()) { checkReaderable(tab); detectLanguage(tab); } }, 400);
+  });
   wc.on('audio-state-changed', update);
   wc.on('page-title-updated', (_e, title) => {
     if (tab.histEntry && tab.histEntry.url === wc.getURL()) { tab.histEntry.title = title; history.save(); }
@@ -1012,11 +1016,22 @@ async function setupAdblock() {
         : origCosmetic(opts);
     }
 
+    // Busy pages block hundreds of things; count them cheaply and update the toolbar a few times a second.
+    const tabsByWc = () => { const m = new Map(); for (const x of allTabs()) if (!x.view.webContents.isDestroyed()) m.set(x.view.webContents.id, x); return m; };
+    let pendingBlocked = 0, dirtyWins = new Set(), flushTimer = null, lookup = null;
     blocker.on('request-blocked', (request) => {
-      const t = allTabs().find(x => !x.view.webContents.isDestroyed() && x.view.webContents.id === request.tabId);
-      if (t) { t.blocked++; sendState(t.w); }
-      settings.data.blockedTotal = (settings.data.blockedTotal || 0) + 1;
-      settings.save();
+      if (!lookup) lookup = tabsByWc();
+      const t = lookup.get(request.tabId);
+      if (t) { t.blocked++; dirtyWins.add(t.w); }
+      pendingBlocked++;
+      if (!flushTimer) flushTimer = setTimeout(() => {
+        flushTimer = null; lookup = null;
+        settings.data.blockedTotal = (settings.data.blockedTotal || 0) + pendingBlocked;
+        pendingBlocked = 0;
+        settings.save();
+        for (const w of dirtyWins) sendState(w);
+        dirtyWins = new Set();
+      }, 300);
     });
     applyAdblock();
     log('Ad blocker ready', typeof E.fromPrebuiltFull === 'function' ? '(full lists)' : '(ads + tracking)');
@@ -1082,6 +1097,11 @@ async function checkReaderable(tab) {
   const wc = tab.view.webContents;
   if (!readabilitySource || tab.private === undefined || wc.isDestroyed() || !/^https?:/.test(wc.getURL())) return;
   try {
+    // Quick check first so most pages never load the (large) Readability script.
+    const likely = await wc.executeJavaScriptInIsolatedWorld(1001, [{
+      code: `[...document.querySelectorAll('p')].filter(p => (p.textContent || '').length > 120).length >= 4`,
+    }]);
+    if (!likely) { if (tab.readerable) { tab.readerable = false; sendState(tab.w); } return; }
     const r = await wc.executeJavaScriptInIsolatedWorld(1001, [{
       code: `(() => { if (!window.__cbReadability) { ${readabilitySource}; window.__cbReadability = { Readability, isProbablyReaderable }; }
         return window.__cbReadability.isProbablyReaderable(document, { minContentLength: 200, minScore: 30 }); })()`,
@@ -1460,7 +1480,8 @@ function isGoogleSignIn(url) {
 // another site which page you came from.
 function setupPrivacyHeaders() {
   for (const [p, isPrivate] of [[NORMAL_PARTITION, false], [PRIVATE_PARTITION, true]]) {
-    session.fromPartition(p).webRequest.onBeforeSendHeaders((details, callback) => {
+    // Only pages, frames and data requests: skipping images/scripts/fonts keeps the main process free.
+    session.fromPartition(p).webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'], types: ['mainFrame', 'subFrame', 'xhr'] }, (details, callback) => {
       const h = details.requestHeaders;
       if (settings.data.sendGpc) { h['Sec-GPC'] = '1'; h['DNT'] = '1'; }
       if (isGoogleSignIn(details.url)) {

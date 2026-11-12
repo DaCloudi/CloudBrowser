@@ -43,6 +43,9 @@ class Vpn {
     this.incognitoOpen = false;
     this.retries = 0;
     this.proxied = { normal: false, private: false };
+    // Checked once (info() is called often).
+    this.torAvailable = fs.existsSync(path.join(this.vendorDir('tor'), 'tor.exe'));
+    this.wgAvailable = fs.existsSync(path.join(this.vendorDir('wireproxy'), 'wireproxy.exe'));
   }
 
   vendorDir(name) {
@@ -71,8 +74,8 @@ class Vpn {
       country: this.settings.data.vpnCountry || 'auto',
       countries: COUNTRIES,
       wgConfigName: this.settings.data.vpnWgConfigName || null,
-      torAvailable: fs.existsSync(path.join(this.vendorDir('tor'), 'tor.exe')),
-      wgAvailable: fs.existsSync(path.join(this.vendorDir('wireproxy'), 'wireproxy.exe')),
+      torAvailable: this.torAvailable,
+      wgAvailable: this.wgAvailable,
     };
   }
 
