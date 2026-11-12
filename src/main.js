@@ -85,6 +85,8 @@ let privateMode = false;
 let closedTabs = [];
 let updateState = { status: 'idle' };
 let blocker = null;
+let privateBlocker = null;
+let popupsBlocked = 0;
 const blockingOn = new Set();
 const privatePermissions = new Map(); // origin -> { permission: 'allow'|'block' } (private tabs, this run only)
 let downloads = [];      // newest first
@@ -313,7 +315,18 @@ function wireTab(tab) {
     tab.failedUrl = url;
     load(wc, 'data:text/html;charset=utf-8,' + encodeURIComponent(errorPage('This tab crashed', details.reason, url)));
   });
+  wc.on('input-event', (_e, input) => {
+    if (['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'char', 'touchStart', 'gestureTap'].includes(input.type)) tab.lastInput = Date.now();
+  });
   wc.setWindowOpenHandler(({ url, disposition }) => {
+    // Pop-up blocker: sites may only open windows/tabs straight after you click or press a key.
+    if (Date.now() - (tab.lastInput || 0) > 2000) {
+      popupsBlocked++;
+      tab.blocked++;
+      log('Blocked pop-up', url);
+      sendState();
+      return { action: 'deny' };
+    }
     if (disposition === 'new-window') {
       // A real popup (e.g. "Sign in with…"), which may need window.opener.
       return {
@@ -635,13 +648,19 @@ async function setupAdblock() {
     blocker = await mod.ElectronBlocker.fromPrebuiltAdsAndTracking(fetch, {
       path: cache, read: fs.promises.readFile, write: fs.promises.writeFile,
     });
-    blocker.on('request-blocked', (request) => {
-      const t = tabs.find(x => !x.view.webContents.isDestroyed() && x.view.webContents.id === request.tabId);
-      if (t) t.blocked++;
-      settings.data.blockedTotal = (settings.data.blockedTotal || 0) + 1;
-      settings.save();
-      sendState();
-    });
+    // The blocker's page-cleanup part registers app-wide handlers that can only exist once,
+    // so private tabs get a copy that does network blocking only.
+    privateBlocker = mod.ElectronBlocker.deserialize(blocker.serialize());
+    privateBlocker.config.loadCosmeticFilters = false;
+    for (const b of [blocker, privateBlocker]) {
+      b.on('request-blocked', (request) => {
+        const t = tabs.find(x => !x.view.webContents.isDestroyed() && x.view.webContents.id === request.tabId);
+        if (t) t.blocked++;
+        settings.data.blockedTotal = (settings.data.blockedTotal || 0) + 1;
+        settings.save();
+        sendState();
+      });
+    }
     applyAdblock();
     log('Ad blocker ready');
   } catch (e) {
@@ -653,22 +672,14 @@ async function setupAdblock() {
 
 function applyAdblock() {
   if (!blocker) return;
-  for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) {
+  for (const [p, b] of [[NORMAL_PARTITION, blocker], [PRIVATE_PARTITION, privateBlocker]]) {
+    if (!b) continue;
     const s = session.fromPartition(p);
-    if (settings.data.adblock && !blockingOn.has(p)) {
-      // The blocker registers global IPC handlers each time it is enabled for a session,
-      // which Electron refuses the second time. Its handlers work for every session, so
-      // drop the old one and let it register again.
-      for (let attempt = 0; attempt < 6; attempt++) {
-        try { blocker.enableBlockingInSession(s); blockingOn.add(p); break; } catch (e) {
-          const m = /second handler for '([^']+)'/.exec(e.message);
-          if (!m) { log('Ad blocker session error', p, e.message); break; }
-          ipcMain.removeHandler(m[1]);
-        }
-      }
-    } else if (!settings.data.adblock && blockingOn.has(p)) {
-      try { blocker.disableBlockingInSession(s); } catch (e) { log('Ad blocker disable error', p, e.message); }
-      blockingOn.delete(p);
+    try {
+      if (settings.data.adblock && !blockingOn.has(p)) { b.enableBlockingInSession(s); blockingOn.add(p); }
+      else if (!settings.data.adblock && blockingOn.has(p)) { b.disableBlockingInSession(s); blockingOn.delete(p); }
+    } catch (e) {
+      log('Ad blocker session error', p, e.message);
     }
   }
 }
@@ -1215,6 +1226,10 @@ async function smokeTest() {
     S('cloud api exposed on normal website?', apiOnWeb);
 
     S('blocking sessions', [...blockingOn]);
+    const before = tabs.length;
+    await tabs[0].view.webContents.executeJavaScript(`window.open('https://example.net/'); 1`);
+    await wait(800);
+    S('pop-up without click blocked?', tabs.length === before, 'popupsBlocked', popupsBlocked);
     const pt = createTab('https://www.theverge.com/', { isPrivate: true });
     await wait(9000);
     S('private tab blocked', pt.blocked, 'history recorded?', history.data.items.filter(h => h.url.includes('theverge')).length);
@@ -1232,9 +1247,10 @@ async function smokeTest() {
     // dark theme + address bar suggestions
     setSetting('theme', 'dark');
     await wait(800);
+    ui.webContents.focus();
     await ui.webContents.executeJavaScript(`(() => { const a = document.getElementById('address'); a.focus(); a.value = 'exam'; a.dispatchEvent(new Event('input')); })()`);
     await wait(1500);
-    S('overlay open', overlayOpen);
+    S('overlay open', overlayOpen, await ui.webContents.executeJavaScript(`JSON.stringify({ ae: document.activeElement && document.activeElement.id, body: document.body.className, rows: document.querySelectorAll('.sg').length })`));
     await shot('suggest-dark');
     await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);

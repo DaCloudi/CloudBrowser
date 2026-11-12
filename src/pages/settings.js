@@ -7,19 +7,23 @@ async function load() {
 
   const engine = $('searchEngine');
   engine.replaceChildren(...info.engines.map(e => h('option', { value: e.id }, e.name)));
-  engine.value = s.searchEngine;
-  $('homePage').value = s.homePage;
-  $('restoreTabs').checked = s.restoreTabs;
-  $('theme').value = s.theme;
-  $('showBookmarksBar').checked = s.showBookmarksBar;
-  $('adblock').checked = s.adblock;
-  $('askDownloadLocation').checked = s.askDownloadLocation;
+  fill(s);
   $('dlFolder').textContent = info.downloadsFolder;
   $('version').textContent = info.version;
   $('engineVersions').textContent = `Chromium ${info.chrome} · Electron ${info.electron}`;
   renderAdblockHint(s);
   renderUpdate(info.update);
   renderPermissions();
+}
+
+function fill(s) {
+  $('searchEngine').value = s.searchEngine;
+  if (document.activeElement !== $('homePage')) $('homePage').value = s.homePage;
+  $('restoreTabs').checked = s.restoreTabs;
+  $('theme').value = s.theme;
+  $('showBookmarksBar').checked = s.showBookmarksBar;
+  $('adblock').checked = s.adblock;
+  $('askDownloadLocation').checked = s.askDownloadLocation;
 }
 
 function renderAdblockHint(s) {
@@ -90,6 +94,6 @@ $('clear').onclick = async () => {
 };
 
 cloud.on('update', u => renderUpdate(u));
-cloud.on('settings', s => { if (info) { info.settings = s; renderAdblockHint(s); } });
+cloud.on('settings', s => { if (info) { info.settings = s; fill(s); renderAdblockHint(s); } });
 
 load();
