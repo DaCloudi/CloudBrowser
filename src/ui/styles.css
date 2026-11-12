@@ -258,3 +258,8 @@ body.collapsed #vtabs .tab .title, body.collapsed #vtabs .tab .close, body.colla
 body.collapsed .side-item span { display: none; }
 body.collapsed .side-item { justify-content: center; padding: 0; }
 body.collapsed #side-collapse svg { transform: rotate(180deg); }
+
+#storebar { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 14px 6px; }
+#storebar[hidden] { display: none; }
+#storebar svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
+#storebar span { flex: 1; min-width: 0; }

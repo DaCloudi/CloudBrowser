@@ -51,6 +51,24 @@ function reportPageRect() {
 new ResizeObserver(reportPageRect).observe($('chrome'));
 new ResizeObserver(reportPageRect).observe($('sidebar'));
 
+// "Add to CloudBrowser" bar on Chrome Web Store pages
+let storeBusy = false;
+$('store-btn').onclick = () => {
+  const x = state && state.storeExtension;
+  if (!x || storeBusy) return;
+  x.installed ? cloud.storeRemove(x.id) : cloud.storeInstall(x.id);
+};
+cloud.onStoreBusy(b => { storeBusy = b; render(); });
+function renderStoreBar() {
+  const x = state.storeExtension;
+  $('storebar').hidden = !x;
+  if (!x) return;
+  $('store-text').textContent = x.installed ? `${x.name} is added to CloudBrowser.` : `Add ${x.name} to CloudBrowser?`;
+  $('store-btn').textContent = storeBusy ? 'Adding…' : x.installed ? 'Remove' : 'Add to CloudBrowser';
+  $('store-btn').classList.toggle('primary', !x.installed);
+  $('store-btn').disabled = storeBusy;
+}
+
 // Chrome extension buttons
 let actionList = null;
 function renderActions() {
@@ -353,6 +371,7 @@ function render() {
   renderTabs();
   renderBookmarksBar();
   renderActions();
+  renderStoreBar();
   reportPageRect();
 
   $('back').disabled = !(tab && tab.canGoBack);

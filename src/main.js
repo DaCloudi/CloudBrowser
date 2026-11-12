@@ -111,7 +111,7 @@ protocol.registerSchemesAsPrivileged([
 
 // ---------- state ----------
 
-let settings, bookmarks, history, permissions, downloadStore, sessionStore;
+let settings, bookmarks, history, permissions, downloadStore, sessionStore, extGrants;
 const windows = new Set();   // browser windows (see createWindow)
 let lastFocused = null;
 let nextWinId = 1;
@@ -295,6 +295,7 @@ function pushState(w) {
     sidebarCollapsed: settings.data.sidebarCollapsed,
     extensions: !w.incognito && !!extensions,
     activeWcId: t ? t.view.webContents.id : null,
+    storeExtension: storeExtensionFor(t),
     maximized: w.win.isMaximized(),
   });
   const title = t ? (tabInfo(t).title) : 'New tab';
@@ -1020,6 +1021,7 @@ async function setupExtensions() {
           return w.win;
         },
         removeWindow: (win) => { const w = [...windows].find(x => x.win === win); if (w) w.win.close(); },
+        requestPermissions: (extension, perms) => askExtensionPermission(extension, perms),
       });
       extLib.ElectronChromeExtensions.handleCRXProtocol(session.defaultSession);
       log('Extension support ready');
@@ -1038,6 +1040,56 @@ async function setupExtensions() {
   }
   s.extensions.on('extension-loaded', () => { pagesSend('page:extensions', null); sendStateAll(); });
   s.extensions.on('extension-unloaded', () => { pagesSend('page:extensions', null); sendStateAll(); });
+}
+
+function describeOrigin(o) {
+  if (o === '<all_urls>' || /^\*:\/\/\*\/\*$/.test(o) || /^https?:\/\/\*\/\*$/.test(o)) return 'all websites';
+  const m = /^[^:]+:\/\/(\*\.)?([^/]+)/.exec(o);
+  return m ? m[2] : o;
+}
+
+// An extension asked for extra access (chrome.permissions.request), e.g. BTRoblox asking for roblox.com.
+async function askExtensionPermission(extension, perms = {}) {
+  const id = extension && extension.id;
+  const name = (extension && extension.name) || 'An extension';
+  const origins = perms.origins || [];
+  const apis = perms.permissions || [];
+  log('Extension permission request', name, JSON.stringify(perms));
+  const g = extGrants.data.grants[id] || { origins: [], permissions: [] };
+  if (origins.every(o => g.origins.includes(o)) && apis.every(p => g.permissions.includes(p))) return true;
+
+  let allow = SMOKE;
+  if (!SMOKE) {
+    const sites = [...new Set(origins.map(describeOrigin))];
+    const lines = [];
+    if (sites.length) lines.push(`Read and change your data on ${sites.join(', ')}`);
+    if (apis.length) lines.push(`Use: ${apis.join(', ')}`);
+    const w = currentWindow();
+    const res = await dialog.showMessageBox(w && w.win, {
+      type: 'question', buttons: ['Allow', 'Deny'], defaultId: 0, cancelId: 1, noLink: true,
+      title: 'CloudBrowser', message: `${name} wants extra access`, detail: lines.join('\n') || 'Additional permissions',
+    });
+    allow = res.response === 0;
+  }
+  if (allow && id) {
+    extGrants.data.grants[id] = {
+      origins: [...new Set([...g.origins, ...origins])],
+      permissions: [...new Set([...g.permissions, ...apis])],
+    };
+    extGrants.save();
+  }
+  return allow;
+}
+
+// On a Chrome Web Store extension page, offer our own install button.
+function storeExtensionFor(t) {
+  if (!t || t.private || !extensions || !webStoreLib) return null;
+  const m = /^https:\/\/chromewebstore\.google\.com\/detail\/(?:[^/?#]+\/)?([a-p]{32})/.exec(tabUrl(t));
+  if (!m) return null;
+  const id = m[1];
+  const installed = !!extSession().extensions.getExtension(id);
+  const name = (t.view.webContents.getTitle() || '').replace(/\s*-\s*Chrome Web Store\s*$/i, '') || 'this extension';
+  return { id, name, installed };
 }
 
 function iconDataUrl(ext) {
@@ -1428,6 +1480,14 @@ uiOn('overlay', (w, open) => {
   setOverlay(w, !!open);
   if (!open && !w.ui.webContents.isFocused()) activeTab(w)?.view.webContents.focus();
 });
+uiOn('store-install', async (w, id) => {
+  uiSend(w, 'store-busy', true);
+  const res = await installExtension(id);
+  uiSend(w, 'store-busy', false);
+  if (!res.ok) dialog.showMessageBox(w.win, { type: 'warning', title: 'CloudBrowser', message: 'Couldn’t add the extension', detail: res.error });
+  sendStateAll();
+});
+uiOn('store-remove', async (w, id) => { await removeExtension(id); sendStateAll(); });
 uiOn('toggle-vertical', () => setSetting('verticalTabs', !settings.data.verticalTabs));
 uiOn('toggle-sidebar', () => setSetting('sidebarCollapsed', !settings.data.sidebarCollapsed));
 uiOn('window-control', (w, action) => {
@@ -1597,6 +1657,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     permissions = new Store('permissions', { sites: {} });
     downloadStore = new Store('downloads', { items: [] });
     sessionStore = new Store('session', { windows: [] });
+    extGrants = new Store('extension-permissions', { grants: {} });
     downloads = (downloadStore.data.items || []).map(d => (d.state === 'progressing' || d.state === 'paused') ? { ...d, state: 'interrupted' } : d);
     nextDownloadId = downloads.reduce((m, d) => Math.max(m, d.id || 0), 0) + 1;
     nativeTheme.themeSource = settings.data.theme;
@@ -1745,9 +1806,29 @@ async function smokeTest() {
     load(t.view.webContents, 'https://www.roblox.com/');
     await wait(7000);
     await screen('roblox');
+    const banner = await t.view.webContents.executeJavaScript(`(() => {
+      const el = [...document.querySelectorAll('body *')].find(e => /needs some permissions/i.test(e.textContent || '') && e.children.length === 0);
+      if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`).catch(() => null);
+    S('BTRoblox banner', JSON.stringify(banner));
+    if (banner) {
+      const cb = w.win.getContentBounds();
+      await realClick(Math.round((cb.x + w.pageX + banner.x) * scale), Math.round((cb.y + w.pageY + banner.y) * scale));
+      await wait(2500);
+      S('grants', JSON.stringify(extGrants.data.grants));
+      t.view.webContents.reload();
+      await wait(7000);
+      await screen('roblox-after-permission');
+      S('banner still there?', await t.view.webContents.executeJavaScript(`/needs some permissions/i.test(document.body.innerText)`).catch(() => 'ERR'));
+    }
     load(t.view.webContents, 'https://chromewebstore.google.com/detail/hbkpclpemjeibhioopcebchdmohaieln');
     await wait(7000);
+    S('store bar state', JSON.stringify(storeExtensionFor(t)));
     await screen('web-store');
+    load(t.view.webContents, 'https://chromewebstore.google.com/detail/eimadpbcbfnmbkopoojfekhnkhdbieeh'); // Dark Reader
+    await wait(7000);
+    S('store bar (not installed)', JSON.stringify(storeExtensionFor(t)));
+    await screen('web-store-2');
   });
 
   await step('vertical tabs', async () => {
