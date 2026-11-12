@@ -48,9 +48,10 @@ You can also start a release by hand from the repository's **Actions** tab → *
 
 ## Features
 
-- A home page with search and shortcuts: your most-visited sites, or your own (add, edit, drag to reorder)
+- A calm home page with drifting clouds, search and shortcuts: your most-visited sites, or your own (add, edit, drag to reorder)
+- Closing the last tab opens a fresh home tab instead of quitting
 - Tabs in the title bar, or vertical tabs in a collapsible sidebar
-- Chrome extensions from the Chrome Web Store (e.g. Bitwarden, BTRoblox, RoPro), with toolbar buttons and popups
+- Chrome extensions from the Chrome Web Store (e.g. Bitwarden, BTRoblox, RoPro), kept in a puzzle-piece "folder" in the toolbar; pin favourites to show them directly
 - Incognito windows (Ctrl+Shift+N) that forget everything when closed, and multiple windows (Ctrl+N)
 - Can be set as the Windows default browser, so links and .html files open in it
 - Ad, tracker, cookie-banner and pop-up blocking (also in incognito), with a per-site on/off switch on the shield

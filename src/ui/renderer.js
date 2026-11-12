@@ -265,8 +265,9 @@ function go(row, newTab) {
   address.blur();
 }
 
-address.addEventListener('input', () => { editing = true; updateSuggestions(); });
-address.addEventListener('focus', () => { editing = true; address.select(); });
+let typedSinceFocus = false;
+address.addEventListener('input', () => { editing = true; typedSinceFocus = true; updateSuggestions(); });
+address.addEventListener('focus', () => { editing = true; typedSinceFocus = false; address.select(); });
 address.addEventListener('blur', () => { setTimeout(() => { if (document.activeElement !== address) { editing = false; closeOverlay(); render(); } }, 0); });
 address.addEventListener('keydown', e => {
   const open = document.body.classList.contains('overlay') && rows.length;
@@ -543,6 +544,12 @@ function render() {
   if (state.activeId !== lastActiveId) {
     lastActiveId = state.activeId;
     if (!editing) closeOverlay();
+    // Switched tab while the address bar has focus but nothing was typed: show the new tab's address.
+    if (editing && !typedSinceFocus) {
+      const nt = activeTab();
+      address.value = nt ? displayUrl(nt.url) : '';
+      address.select();
+    }
   }
 
   document.body.classList.toggle('vertical', !!state.verticalTabs);
