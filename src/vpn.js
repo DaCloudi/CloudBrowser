@@ -140,11 +140,13 @@ class Vpn {
     const data = path.join(app.getPath('userData'), 'tor-data');
     fs.mkdirSync(data, { recursive: true });
     const country = this.settings.data.vpnCountry || 'auto';
+    // Quote paths (user folders can contain spaces); forward slashes avoid torrc escape rules.
+    const q = (p) => `"${p.replace(/\\/g, '/')}"`;
     const torrc = [
       `SocksPort 127.0.0.1:${TOR_PORT}`,
-      `DataDirectory ${data}`,
-      `GeoIPFile ${path.join(dir, 'geoip')}`,
-      `GeoIPv6File ${path.join(dir, 'geoip6')}`,
+      `DataDirectory ${q(data)}`,
+      `GeoIPFile ${q(path.join(dir, 'geoip'))}`,
+      `GeoIPv6File ${q(path.join(dir, 'geoip6'))}`,
       'ClientOnly 1',
       'AvoidDiskWrites 1',
       'Log notice stdout',
@@ -235,8 +237,11 @@ class Vpn {
     }
     if (gen !== this.generation) return;
     if (!ip) throw new Error('Connected, but no traffic gets through' + (lastErr ? ` (${lastErr.message})` : '') + '.');
-    this.set({ status: 'on', ip, location: null, error: null });
-    this.log('VPN on:', this.mode, ip);
+    const chosen = this.mode === 'tor' && (this.settings.data.vpnCountry || 'auto') !== 'auto'
+      ? (COUNTRIES.find(([id]) => id === this.settings.data.vpnCountry) || [])[1] : null;
+    this.set({ status: 'on', ip, location: chosen, error: null });
+    this.log('VPN on:', this.mode, ip, chosen || '');
+    if (chosen) return; // Tor enforces the chosen exit country itself
     // Where are we? (best effort; some lookup services refuse Tor)
     for (const url of ['https://ipwho.is/', 'https://ipapi.co/json/']) {
       try {
