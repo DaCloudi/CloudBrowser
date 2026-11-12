@@ -2375,7 +2375,7 @@ async function smokeTest() {
   });
 
   await step('translate', async () => {
-    load(t.view.webContents, 'https://www.lemonde.fr/');
+    load(t.view.webContents, 'https://fr.wikipedia.org/wiki/Nuage');
     await waitFor(() => !t.view.webContents.isLoading(), 20000);
     await wait(2500);
     S('page language', t.pageLang, 'translatable', tabInfo(t).translatable, 'title', t.view.webContents.getTitle());
