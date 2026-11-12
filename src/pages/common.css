@@ -121,3 +121,8 @@ section .list { margin-top: 8px; }
 .update { margin-top: 4px; }
 .update.ok { color: var(--good); }
 .update.bad { color: var(--danger); }
+
+.ext-ico { width: 32px; height: 32px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; }
+.ext-ico svg { width: 22px; height: 22px; }
+section.note { margin-top: 24px; }
+main > h3 { margin: 22px 0 8px 4px; }

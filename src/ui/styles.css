@@ -57,8 +57,18 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 #chrome { position: relative; background: var(--bar); border-bottom: 1px solid var(--line); }
 
 /* ---------- tab strip ---------- */
-#tabstrip { height: 40px; display: flex; align-items: flex-end; padding: 0 6px; background: var(--strip); }
+/* The tab strip doubles as the window's title bar: drag it to move the window.
+   Windows draws the minimise/maximise/close buttons over its right end. */
+#tabstrip {
+  height: 40px; display: flex; align-items: flex-end; padding: 0 146px 0 6px; background: var(--strip);
+  -webkit-app-region: drag;
+}
+#tabstrip button, #tabstrip .tab, #incog-badge { -webkit-app-region: no-drag; }
+#app-icon, #win-title { display: none; }
 #tabs { display: flex; min-width: 0; flex: 0 1 auto; overflow: hidden; padding-top: 6px; }
+body.maximized #tabs { padding-top: 4px; }
+#vertical-toggle { margin: 0 4px 6px; color: var(--muted); }
+#newtab { margin-bottom: 1px; }
 .tab {
   position: relative; display: flex; align-items: center; gap: 8px;
   flex: 0 1 230px; min-width: 44px; width: 230px; height: 34px;
@@ -209,3 +219,42 @@ body.incognito #incognito { display: none; }
 }
 .pill-btn:hover { background: var(--hover); }
 .pill-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- extension buttons ---------- */
+#actions-slot { display: flex; align-items: center; }
+browser-action-list { display: flex; align-items: center; }
+browser-action-list::part(action) { width: 34px; height: 34px; border-radius: 9px; background-size: 18px; }
+browser-action-list::part(action):hover { background-color: var(--hover); }
+browser-action-list::part(badge) { font-size: 9.5px; border-radius: 7px; }
+
+/* ---------- vertical tabs ---------- */
+#sidebar { display: none; }
+body.vertical #tabs, body.vertical #newtab { display: none; }
+body.vertical #tabstrip { align-items: center; padding-left: 12px; }
+body.vertical #app-icon { display: block; width: 18px; height: 18px; margin-right: 10px; }
+body.vertical #win-title { display: block; min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+body.vertical #vertical-toggle { margin-bottom: 0; color: var(--accent); }
+body.vertical #incog-badge { margin-bottom: 0; }
+body.vertical #sidebar {
+  display: flex; flex-direction: column; position: fixed; left: 0; bottom: 0; width: 240px;
+  padding: 8px 6px; gap: 2px; background: var(--bar); border-right: 1px solid var(--line); overflow: hidden;
+}
+body.vertical.collapsed #sidebar { width: 52px; }
+#vtabs { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+#vtabs .tab {
+  width: auto; flex: none; height: 36px; border-radius: 9px; padding: 0 6px 0 10px; box-shadow: none;
+}
+#vtabs .tab:hover { background: var(--hover); }
+#vtabs .tab.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+#vtabs .tab::before { display: none; }
+body.collapsed #vtabs .tab { justify-content: center; padding: 0; }
+body.collapsed #vtabs .tab .title, body.collapsed #vtabs .tab .close, body.collapsed #vtabs .tab .audio { display: none; }
+.side-item {
+  display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 11px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); flex: none; white-space: nowrap; overflow: hidden;
+}
+.side-item:hover { background: var(--hover); color: var(--text); }
+.side-item svg { width: 17px; height: 17px; flex: none; }
+body.collapsed .side-item span { display: none; }
+body.collapsed .side-item { justify-content: center; padding: 0; }
+body.collapsed #side-collapse svg { transform: rotate(180deg); }

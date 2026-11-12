@@ -1,6 +1,12 @@
 // API for the browser UI (tab strip + toolbar). Web pages never get this.
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Chrome extension toolbar buttons (<browser-action-list>), normal windows only.
+if (new URLSearchParams(location.search).get('incognito') !== '1') {
+  try { require('electron-chrome-extensions/browser-action').injectBrowserAction(); }
+  catch (e) { console.error('Extension buttons unavailable: ' + e.message); }
+}
+
 const send = (channel, ...args) => ipcRenderer.send('ui:' + channel, ...args);
 const on = (channel, cb) => ipcRenderer.on(channel, (_e, data) => cb(data));
 
@@ -28,7 +34,10 @@ contextBridge.exposeInMainWorld('cloud', {
   openInternal: (name, hash) => send('open-internal', name, hash || ''),
   find: (text, opts) => send('find', text, opts || {}),
   findStop: () => send('find-stop'),
-  setHeight: h => send('height', h),
+  setPageRect: r => send('page-rect', r),
+  toggleVertical: () => send('toggle-vertical'),
+  toggleSidebar: () => send('toggle-sidebar'),
+  windowControl: a => send('window-control', a),
   setOverlay: open => send('overlay', !!open),
   focusPage: () => send('focus-page'),
   suggest: q => ipcRenderer.invoke('ui:suggest', q),

@@ -23,6 +23,7 @@ function fill(s) {
   $('restoreTabs').checked = s.restoreTabs;
   $('theme').value = s.theme;
   $('showBookmarksBar').checked = s.showBookmarksBar;
+  $('verticalTabs').checked = s.verticalTabs;
   $('adblock').checked = s.adblock;
   $('askDownloadLocation').checked = s.askDownloadLocation;
 }
@@ -88,7 +89,7 @@ $('homeReset').onclick = async () => {
   await set('homePage', e ? e.home : 'https://duckduckgo.com/');
   load();
 };
-for (const id of ['restoreTabs', 'showBookmarksBar', 'adblock', 'askDownloadLocation']) {
+for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation']) {
   $(id).onchange = e => set(id, e.target.checked);
 }
 $('theme').onchange = e => set('theme', e.target.value);

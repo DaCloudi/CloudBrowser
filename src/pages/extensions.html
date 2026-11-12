@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline';">
+  <meta name="color-scheme" content="light dark">
+  <title>Extensions</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/common.css">
+</head>
+<body>
+  <nav>
+    <div class="brand"><img src="/icon.png" alt=""><span>CloudBrowser</span></div>
+    <a href="cloud://settings/" class=""><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2"/><circle cx="12" cy="12" r="6.6"/></svg><span>Settings</span></a><a href="cloud://history/" class=""><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span>History</span></a><a href="cloud://bookmarks/" class=""><svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg><span>Bookmarks</span></a><a href="cloud://downloads/" class=""><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg><span>Downloads</span></a><a href="cloud://extensions/" class="on"><svg viewBox="0 0 24 24"><path d="M9 4h4v2.5a1.5 1.5 0 0 0 3 0V4h0a2 2 0 0 1 2 2v3h-2.5a1.5 1.5 0 0 0 0 3H18v6a2 2 0 0 1-2 2h-3v-2.5a1.5 1.5 0 0 0-3 0V20H6a2 2 0 0 1-2-2v-4h2.5a1.5 1.5 0 0 0 0-3H4V6a2 2 0 0 1 2-2z"/></svg><span>Extensions</span></a>
+  </nav>
+  <main>
+    <div class="head"><h1>Extensions</h1><div class="grow"></div>
+      <button id="store" class="btn primary">Get more from the Chrome Web Store</button></div>
+
+    <p id="unavailable" class="empty" hidden>Extension support couldn’t start. Try restarting CloudBrowser.</p>
+
+    <h3>Installed</h3>
+    <div id="installed" class="list"></div>
+    <p id="none" class="hint" hidden>No extensions yet. Add one below, or open the Chrome Web Store and click “Add to Chrome”.</p>
+
+    <h3>Recommended</h3>
+    <div id="recommended" class="list"></div>
+
+    <section class="note">
+      <h2>Good to know</h2>
+      <p class="hint">Most extensions work, but CloudBrowser isn’t Chrome, so a few features inside some extensions may not.
+      Extensions don’t run in incognito windows.</p>
+      <p class="hint"><b>VPN extensions (like Proton VPN) can’t work here</b>, because CloudBrowser can’t let extensions
+      control its connection. Use the <a href="https://protonvpn.com/download-windows">Proton VPN app for Windows</a> instead —
+      it protects CloudBrowser and everything else on your computer.</p>
+    </section>
+  </main>
+  <script src="/common.js"></script>
+  <script src="/extensions.js"></script>
+</body>
+</html>

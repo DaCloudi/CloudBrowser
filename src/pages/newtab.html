@@ -45,6 +45,33 @@
     <a id="restore" href="#" hidden>Restore hidden sites</a>
   </footer>
 
+  <button id="customize" title="Customize this page">
+    <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span>Customize</span></button>
+
+  <div id="panel" hidden>
+    <h3>Customize shortcuts</h3>
+    <label class="opt"><input type="radio" name="mode" value="mostVisited">
+      <div><b>Most visited sites</b><div class="muted">Picked automatically from the sites you visit most</div></div></label>
+    <label class="opt"><input type="radio" name="mode" value="custom">
+      <div><b>My shortcuts</b><div class="muted">You choose them. Add, edit, remove and drag to reorder</div></div></label>
+    <label class="opt row"><span>Show shortcuts</span><input type="checkbox" id="show" class="switch"></label>
+    <div class="panel-actions"><button id="panel-done" class="btn primary">Done</button></div>
+  </div>
+
+  <div id="dialog-back" hidden>
+    <form id="dialog">
+      <h3 id="dialog-title">Add shortcut</h3>
+      <label>Name<input id="d-name" type="text" spellcheck="false" maxlength="60"></label>
+      <label>Web address<input id="d-url" type="text" spellcheck="false" placeholder="example.com"></label>
+      <div class="dialog-actions">
+        <button type="button" id="d-remove" class="btn danger">Remove</button>
+        <div class="grow"></div>
+        <button type="button" id="d-cancel" class="btn">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+
   <script src="/newtab.js"></script>
 </body>
 </html>

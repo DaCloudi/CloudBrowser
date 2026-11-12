@@ -36,8 +36,35 @@ for (const id of ['back', 'forward']) {
   $(id).addEventListener('auxclick', e => { if (e.button === 1) cloud[id](); });
 }
 
-// Report the UI's height so pages sit right below it.
-new ResizeObserver(() => cloud.setHeight($('chrome').getBoundingClientRect().height)).observe($('chrome'));
+$('vertical-toggle').onclick = () => cloud.toggleVertical();
+$('side-newtab').onclick = () => cloud.newTab();
+$('side-collapse').onclick = () => cloud.toggleSidebar();
+
+// Tell the main process where pages go: right of the vertical tab bar, below the toolbar.
+function reportPageRect() {
+  const top = Math.round($('chrome').getBoundingClientRect().height);
+  const side = $('sidebar');
+  side.style.top = top + 'px';
+  const x = document.body.classList.contains('vertical') ? Math.round(side.getBoundingClientRect().width) : 0;
+  cloud.setPageRect({ x, y: top });
+}
+new ResizeObserver(reportPageRect).observe($('chrome'));
+new ResizeObserver(reportPageRect).observe($('sidebar'));
+
+// Chrome extension buttons
+let actionList = null;
+function renderActions() {
+  if (!state.extensions) { if (actionList) { actionList.remove(); actionList = null; } return; }
+  if (!actionList && customElements.get('browser-action-list')) {
+    actionList = document.createElement('browser-action-list');
+    actionList.setAttribute('partition', 'persist:cloudbrowser');
+    actionList.setAttribute('alignment', 'bottom left');
+    $('actions-slot').append(actionList);
+  }
+  if (actionList && state.activeWcId && actionList.getAttribute('tab') !== String(state.activeWcId)) {
+    actionList.setAttribute('tab', String(state.activeWcId));
+  }
+}
 
 // ---------- address bar + suggestions ----------
 
@@ -216,8 +243,10 @@ function siteKind(url) {
 }
 
 function renderTabs() {
-  const strip = $('tabs');
-  const narrow = state.tabs.length > 0 && (strip.parentElement.clientWidth - 60) / state.tabs.length < 90;
+  const vertical = !!state.verticalTabs;
+  const strip = vertical ? $('vtabs') : $('tabs');
+  (vertical ? $('tabs') : $('vtabs')).replaceChildren();
+  const narrow = !vertical && state.tabs.length > 0 && (strip.parentElement.clientWidth - 200) / state.tabs.length < 90;
   strip.replaceChildren(...state.tabs.map(t => {
     const el = document.createElement('div');
     el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow ? ' narrow' : '');
@@ -269,6 +298,7 @@ function renderTabs() {
     el.append(close);
     return el;
   }));
+  if (vertical) { const a = strip.querySelector('.tab.active'); if (a) a.scrollIntoView({ block: 'nearest' }); }
 }
 
 function renderBookmarksBar() {
@@ -314,8 +344,16 @@ function render() {
     if (!editing) closeOverlay();
   }
 
+  document.body.classList.toggle('vertical', !!state.verticalTabs);
+  document.body.classList.toggle('collapsed', !!state.sidebarCollapsed);
+  document.body.classList.toggle('maximized', !!state.maximized);
+  $('vertical-toggle').title = state.verticalTabs ? 'Turn off vertical tabs' : 'Turn on vertical tabs';
+  $('side-collapse').title = state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  $('win-title').textContent = tab ? tab.title : '';
   renderTabs();
   renderBookmarksBar();
+  renderActions();
+  reportPageRect();
 
   $('back').disabled = !(tab && tab.canGoBack);
   $('forward').disabled = !(tab && tab.canGoForward);

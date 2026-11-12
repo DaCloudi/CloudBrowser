@@ -18,6 +18,11 @@ const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { Store, flushAll } = require('./store');
 
+let extLib = null;
+let webStoreLib = null;
+try { extLib = require('electron-chrome-extensions'); } catch (e) { console.error('Extension support unavailable:', e.message); }
+try { webStoreLib = require('electron-chrome-web-store'); } catch (e) { console.error('Web Store support unavailable:', e.message); }
+
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch (e) { console.error('Updater unavailable:', e.message); }
 
@@ -27,7 +32,15 @@ const SMOKE = process.env.CLOUD_SMOKE === '1';
 const NORMAL_PARTITION = 'persist:cloudbrowser';
 const PRIVATE_PARTITION = 'cloudbrowser-private'; // no "persist:" = memory only
 const PAGES_DIR = path.join(__dirname, 'pages');
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads'];
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions'];
+const TITLEBAR_HEIGHT = 40;
+
+// Shown on the extensions page for one-click install.
+const RECOMMENDED_EXTENSIONS = [
+  { id: 'nngceckbapebfimnlniiiahkandclblb', name: 'Bitwarden Password Manager', about: 'Saves and fills your passwords.' },
+  { id: 'hbkpclpemjeibhioopcebchdmohaieln', name: 'BTRoblox', about: 'Makes the Roblox website better.' },
+  { id: 'adbacgifemdbhdkfppmeilbgppmhaobf', name: 'RoPro', about: 'Dozens of extra Roblox features and trading tools.' },
+];
 const NEWTAB_URL = 'cloud://newtab/';
 const PROG_ID = 'CloudBrowserHTML';
 
@@ -52,9 +65,14 @@ const DEFAULT_SETTINGS = {
   blockedTotal: 0,
   hiddenSites: [],
   homeVersion: 0,
+  verticalTabs: false,
+  sidebarCollapsed: false,
+  shortcutsMode: 'mostVisited', // mostVisited | custom
+  showShortcuts: true,
+  shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
   window: null,               // { width, height, maximized }
 };
-const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion']);
+const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts']);
 
 // Shown on the home page until there's enough history to replace them.
 const DEFAULT_SITES = [
@@ -111,6 +129,7 @@ const liveDownloads = new Map();
 let nextDownloadId = 1;
 let downloadsThisRun = 0;
 let isDefaultBrowser = null; // null = unknown / not applicable
+let extensions = null;        // ElectronChromeExtensions instance (normal windows only)
 
 // ---------- small helpers ----------
 
@@ -242,6 +261,7 @@ function tabInfo(t) {
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
     private: t.private,
+    wcId: wc.id,
     blocked: t.blocked,
     audible: wc.isCurrentlyAudible(),
     muted: wc.isAudioMuted(),
@@ -271,6 +291,11 @@ function pushState(w) {
     downloads: downloadSummary(),
     engineName: engine().name,
     defaultBanner: !w.incognito && isDefaultBrowser === false && !settings.data.defaultPromptDismissed,
+    verticalTabs: settings.data.verticalTabs,
+    sidebarCollapsed: settings.data.sidebarCollapsed,
+    extensions: !w.incognito && !!extensions,
+    activeWcId: t ? t.view.webContents.id : null,
+    maximized: w.win.isMaximized(),
   });
   const title = t ? (tabInfo(t).title) : 'New tab';
   w.win.setTitle(`${title} — CloudBrowser${w.incognito ? ' (Incognito)' : ''}`);
@@ -278,12 +303,30 @@ function pushState(w) {
 
 // ---------- layout ----------
 
+// The UI view fills the whole window, underneath the tabs. Pages sit in the space the
+// UI leaves for them (right of the vertical tab bar, below the toolbar). While the
+// address-bar suggestions are open, the UI view is lifted above the page.
 function layout(w) {
   if (!w || !w.win || w.win.isDestroyed()) return;
   const { width, height } = w.win.getContentBounds();
-  const top = w.htmlFullscreen ? 0 : w.uiHeight;
-  for (const t of w.tabs) t.view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
-  w.ui.setBounds({ x: 0, y: 0, width, height: w.htmlFullscreen ? 0 : (w.overlayOpen ? height : w.uiHeight) });
+  const x = w.htmlFullscreen ? 0 : w.pageX;
+  const y = w.htmlFullscreen ? 0 : w.pageY;
+  for (const t of w.tabs) t.view.setBounds({ x, y, width: Math.max(0, width - x), height: Math.max(0, height - y) });
+  w.ui.setBounds({ x: 0, y: 0, width, height });
+}
+
+function setOverlay(w, open) {
+  w.overlayOpen = open;
+  if (open) w.win.contentView.addChildView(w.ui); // lift the UI above the page
+  else for (const t of w.tabs) w.win.contentView.addChildView(t.view); // pages back on top
+  layout(w);
+}
+
+function titleBarColors(incognito) {
+  if (incognito) return { color: '#15111e', symbolColor: '#ece6fb', height: TITLEBAR_HEIGHT };
+  return nativeTheme.shouldUseDarkColors
+    ? { color: '#161a21', symbolColor: '#e6ebf3', height: TITLEBAR_HEIGHT }
+    : { color: '#dfe8f5', symbolColor: '#1f2a3c', height: TITLEBAR_HEIGHT };
 }
 
 // ---------- windows ----------
@@ -300,6 +343,9 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     icon: path.join(__dirname, 'ui', 'icon.png'),
     backgroundColor: incognito ? '#1d1828' : (nativeTheme.shouldUseDarkColors ? '#1c2029' : '#e6edf7'),
     autoHideMenuBar: true,
+    // Tabs live in the title bar; Windows draws the minimise/maximise/close buttons on top.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: titleBarColors(incognito),
   };
   if (cur && !cur.win.isDestroyed()) {
     const b = cur.win.getBounds();
@@ -307,7 +353,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   }
   const w = {
     id: nextWinId++, incognito, tabs: [], activeId: null, closedTabs: [],
-    uiHeight: 84, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
+    pageX: 0, pageY: 84, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
   if (!cur && saved.maximized && !incognito) w.win.maximize();
@@ -319,7 +365,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     webPreferences: {
       preload: path.join(__dirname, 'preload-ui.js'),
       contextIsolation: true,
-      sandbox: true,
+      sandbox: false, // our own local page; needs Node to load the extension buttons
       spellcheck: false,
     },
   });
@@ -339,7 +385,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     if (tabUrl(activeTab(w)).startsWith(NEWTAB_URL)) focusAddress(w);
   });
 
-  for (const ev of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'restore']) w.win.on(ev, () => layout(w));
+  for (const ev of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'restore']) w.win.on(ev, () => { layout(w); sendState(w); });
   w.win.on('focus', () => { lastFocused = w; checkDefaultBrowser(); });
   w.win.on('close', () => {
     if (!w.incognito) {
@@ -394,8 +440,10 @@ function createTab(w, url, { activate = true, openerId = null } = {}) {
   } else {
     w.tabs.push(tab);
   }
-  w.win.contentView.addChildView(view, 0); // below the UI view
+  if (w.overlayOpen) w.win.contentView.addChildView(view, Math.max(0, w.win.contentView.children.indexOf(w.ui)));
+  else w.win.contentView.addChildView(view); // above the UI view
   wireTab(tab);
+  if (extensions && !w.incognito) { try { extensions.addTab(view.webContents, w.win); } catch (e) { log('extensions.addTab failed', e.message); } }
   layout(w);
 
   load(view.webContents, url);
@@ -500,6 +548,7 @@ function switchTab(w, id) {
   }
   w.activeId = id;
   for (const x of w.tabs) x.view.setVisible(x.id === id);
+  if (extensions && !w.incognito) { try { extensions.selectTab(t.view.webContents); } catch {} }
   if (!w.overlayOpen) t.view.webContents.focus();
   sendState(w);
   saveSession();
@@ -928,6 +977,120 @@ async function makeDefaultBrowser() {
   shell.openExternal('ms-settings:defaultapps?registeredAppUser=CloudBrowser').catch(() => shell.openExternal('ms-settings:defaultapps'));
 }
 
+// ---------- home page shortcuts ----------
+
+function homeShortcuts() {
+  if (settings.data.shortcutsMode === 'custom') {
+    return settings.data.shortcuts.map(x => ({ url: x.url, title: x.title || hostOf(x.url), host: hostOf(x.url).replace(/^www\./, '') }));
+  }
+  return topSites();
+}
+
+// ---------- Chrome extensions ----------
+
+function extSession() { return session.fromPartition(NORMAL_PARTITION); }
+
+function waitForTabs(w) {
+  return new Promise(resolve => {
+    if (w.tabs.length) return resolve();
+    const iv = setInterval(() => { if (w.tabs.length || !windows.has(w)) { clearInterval(iv); resolve(); } }, 50);
+  });
+}
+
+async function setupExtensions() {
+  const s = extSession();
+  if (extLib) {
+    try {
+      const { ElectronChromeExtensions } = extLib;
+      extensions = new ElectronChromeExtensions({
+        license: 'GPL-3.0',
+        session: s,
+        createTab: async (details) => {
+          let w = [...windows].find(x => !x.incognito && x.win.id === details.windowId) || normalWindow();
+          await waitForTabs(w);
+          const t = createTab(w, details.url || homeUrl(), { activate: details.active !== false });
+          return [t.view.webContents, w.win];
+        },
+        selectTab: (wc) => { const t = tabByContents(wc); if (t) { switchTab(t.w, t.id); t.w.win.focus(); } },
+        removeTab: (wc) => { const t = tabByContents(wc); if (t) closeTab(t.id); },
+        createWindow: async (details) => {
+          const urls = details.url ? [].concat(details.url) : [homeUrl()];
+          const w = createWindow({ urls });
+          await waitForTabs(w);
+          return w.win;
+        },
+        removeWindow: (win) => { const w = [...windows].find(x => x.win === win); if (w) w.win.close(); },
+      });
+      extLib.ElectronChromeExtensions.handleCRXProtocol(session.defaultSession);
+      log('Extension support ready');
+    } catch (e) {
+      extensions = null;
+      log('Extension support failed:', e && e.stack || e);
+    }
+  }
+  if (webStoreLib) {
+    try {
+      await webStoreLib.installChromeWebStore({ session: s });
+      log('Web Store ready; loaded', s.extensions.getAllExtensions().map(x => x.name));
+    } catch (e) {
+      log('Web Store failed:', e && e.stack || e);
+    }
+  }
+  s.extensions.on('extension-loaded', () => { pagesSend('page:extensions', null); sendStateAll(); });
+  s.extensions.on('extension-unloaded', () => { pagesSend('page:extensions', null); sendStateAll(); });
+}
+
+function iconDataUrl(ext) {
+  try {
+    const icons = ext.manifest.icons || {};
+    const size = Object.keys(icons).map(Number).sort((a, b) => b - a)[0];
+    if (!size) return null;
+    const file = path.join(ext.path, icons[size]);
+    const type = file.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
+    return `data:${type};base64,${fs.readFileSync(file).toString('base64')}`;
+  } catch { return null; }
+}
+
+function listExtensions() {
+  const s = extSession();
+  const installed = s.extensions.getAllExtensions().map(ext => ({
+    id: ext.id,
+    name: ext.name,
+    version: ext.version,
+    description: ext.manifest.description && !ext.manifest.description.startsWith('__MSG_') ? ext.manifest.description : '',
+    icon: iconDataUrl(ext),
+    hasOptions: !!((ext.manifest.options_ui && ext.manifest.options_ui.page) || ext.manifest.options_page),
+  }));
+  return {
+    available: !!extensions && !!webStoreLib,
+    installed,
+    recommended: RECOMMENDED_EXTENSIONS.map(r => ({ ...r, installed: installed.some(i => i.id === r.id) })),
+  };
+}
+
+async function installExtension(id) {
+  if (!webStoreLib || !/^[a-p]{32}$/.test(id)) return { ok: false, error: 'Extensions are not available.' };
+  try {
+    await webStoreLib.installExtension(id, { session: extSession() });
+    return { ok: true };
+  } catch (e) {
+    log('install extension failed', id, e && e.stack || e);
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+async function removeExtension(id) {
+  const s = extSession();
+  try {
+    if (webStoreLib && webStoreLib.uninstallExtension) await webStoreLib.uninstallExtension(id, { session: s });
+    else s.extensions.removeExtension(id);
+    return { ok: true };
+  } catch (e) {
+    try { s.extensions.removeExtension(id); } catch {}
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
 // ---------- keyboard shortcuts ----------
 
 function handleShortcut(w, input) {
@@ -1047,6 +1210,12 @@ function showContextMenu(tab, p) {
     t.push({ label: 'View page source', enabled: /^https?:/.test(tabUrl(tab)), click: () => createTab(w, 'view-source:' + tabUrl(tab), { openerId: tab.id }) });
     sep();
   }
+  if (extensions && !w.incognito) {
+    try {
+      const items = extensions.getContextMenuItems(wc, p);
+      if (items.length) { sep(); t.push(...items); sep(); }
+    } catch (e) { log('extension menu items failed', e.message); }
+  }
   t.push({ label: 'Inspect', click: () => wc.inspectElement(p.x, p.y) });
   Menu.buildFromTemplate(t).popup({ window: w.win });
 }
@@ -1073,6 +1242,8 @@ function showMainMenu(w) {
     { label: 'History', accelerator: 'Ctrl+H', click: () => openInternal(w, 'history') },
     { label: 'Downloads', accelerator: 'Ctrl+J', click: () => openInternal(w, 'downloads') },
     { label: 'Bookmarks', accelerator: 'Ctrl+Shift+O', click: () => openInternal(w, 'bookmarks') },
+    { label: 'Extensions', click: () => openInternal(w, 'extensions') },
+    { label: 'Vertical tabs', type: 'checkbox', checked: settings.data.verticalTabs, click: () => setSetting('verticalTabs', !settings.data.verticalTabs) },
     { label: 'Show bookmarks bar', type: 'checkbox', checked: settings.data.showBookmarksBar, accelerator: 'Ctrl+Shift+B',
       click: () => setSetting('showBookmarksBar', !settings.data.showBookmarksBar) },
     { type: 'separator' },
@@ -1104,6 +1275,7 @@ function showTabMenu(w, id) {
   const wc = t.view.webContents;
   Menu.buildFromTemplate([
     { label: 'New tab', click: () => createTab(w) },
+    { label: settings.data.verticalTabs ? 'Turn off vertical tabs' : 'Turn on vertical tabs', click: () => setSetting('verticalTabs', !settings.data.verticalTabs) },
     { type: 'separator' },
     { label: 'Reload', click: () => wc.reload() },
     { label: 'Duplicate', click: () => createTab(w, tabUrl(t), { openerId: t.id }) },
@@ -1148,6 +1320,10 @@ function setSetting(key, value) {
   if (typeof value !== typeof DEFAULT_SETTINGS[key]) return false;
   if (key === 'searchEngine' && !ENGINES[value]) return false;
   if (key === 'theme' && !['system', 'light', 'dark'].includes(value)) return false;
+  if (key === 'shortcutsMode' && !['mostVisited', 'custom'].includes(value)) return false;
+  if (key === 'shortcutsMode' && value === 'custom' && !settings.data.shortcuts.length) {
+    settings.data.shortcuts = topSites().map(x => ({ title: x.title, url: x.url })); // start from what's showing now
+  }
   if (key === 'homePage') value = toUrl(value);
   settings.data[key] = value;
   settings.save();
@@ -1242,11 +1418,21 @@ uiOn('find', (w, text, opts) => {
   wc.findInPage(String(text), { forward: opts?.forward !== false, findNext: !!opts?.newSearch });
 });
 uiOn('find-stop', w => { const wc = activeTab(w)?.view.webContents; if (wc) { wc.stopFindInPage('keepSelection'); wc.focus(); } });
-uiOn('height', (w, h) => { const n = Math.round(Number(h)); if (n > 0 && n < 400 && n !== w.uiHeight) { w.uiHeight = n; layout(w); } });
-uiOn('overlay', (w, open) => {
-  w.overlayOpen = !!open;
+uiOn('page-rect', (w, r) => {
+  const x = Math.round(Number(r && r.x)), y = Math.round(Number(r && r.y));
+  if (!(x >= 0 && x < 800 && y > 0 && y < 400) || (x === w.pageX && y === w.pageY)) return;
+  w.pageX = x; w.pageY = y;
   layout(w);
-  if (!w.overlayOpen && !w.ui.webContents.isFocused()) activeTab(w)?.view.webContents.focus();
+});
+uiOn('overlay', (w, open) => {
+  setOverlay(w, !!open);
+  if (!open && !w.ui.webContents.isFocused()) activeTab(w)?.view.webContents.focus();
+});
+uiOn('toggle-vertical', () => setSetting('verticalTabs', !settings.data.verticalTabs));
+uiOn('toggle-sidebar', () => setSetting('sidebarCollapsed', !settings.data.sidebarCollapsed));
+uiOn('window-control', (w, action) => {
+  if (action === 'minimize') w.win.minimize();
+  if (action === 'maximize') w.win.isMaximized() ? w.win.unmaximize() : w.win.maximize();
 });
 uiOn('focus-page', w => activeTab(w)?.view.webContents.focus());
 uiOn('make-default', () => makeDefaultBrowser());
@@ -1284,7 +1470,9 @@ pageHandle('newtab', (ctx) => {
   return {
     incognito,
     engineName: engine().name,
-    sites: incognito ? [] : topSites(),
+    sites: incognito ? [] : homeShortcuts(),
+    mode: settings.data.shortcutsMode,
+    show: settings.data.showShortcuts,
     blockedTotal: settings.data.blockedTotal || 0,
     adblock: settings.data.adblock && !!blocker,
   };
@@ -1302,6 +1490,15 @@ pageHandle('hide-site', (_ctx, host) => {
   return topSites();
 });
 pageHandle('restore-sites', () => { settings.data.hiddenSites = []; settings.save(); return topSites(); });
+pageHandle('save-shortcuts', (_ctx, list) => {
+  if (!Array.isArray(list)) return homeShortcuts();
+  settings.data.shortcuts = list.slice(0, 12).map(x => ({ title: String(x.title || '').slice(0, 60), url: toUrl(String(x.url || '')) }))
+    .filter(x => /^(https?|cloud|file):/.test(x.url));
+  settings.data.shortcutsMode = 'custom';
+  settings.save();
+  pagesSend('page:settings', settings.data);
+  return homeShortcuts();
+});
 pageHandle('set-setting', (_ctx, key, value) => setSetting(key, value));
 pageHandle('history', (_ctx, query) => {
   const q = (query || '').trim().toLowerCase();
@@ -1351,6 +1548,16 @@ pageHandle('check-updates', () => { checkForUpdates(); return true; });
 pageHandle('install-update', () => { autoUpdater && autoUpdater.quitAndInstall(); return true; });
 pageHandle('open-downloads-folder', () => { shell.openPath(app.getPath('downloads')); return true; });
 pageHandle('make-default', async () => { await makeDefaultBrowser(); return true; });
+pageHandle('extensions', () => listExtensions());
+pageHandle('install-extension', async (_ctx, id) => installExtension(id));
+pageHandle('remove-extension', async (_ctx, id) => removeExtension(id));
+pageHandle('extension-options', (ctx, id) => {
+  const ext = extSession().extensions.getExtension(id);
+  const page = ext && ((ext.manifest.options_ui && ext.manifest.options_ui.page) || ext.manifest.options_page);
+  if (page) createTab(normalWindow(), `chrome-extension://${id}/${page}`);
+  return !!page;
+});
+pageHandle('open-web-store', () => { createTab(normalWindow(), 'https://chromewebstore.google.com/category/extensions'); return true; });
 pageHandle('check-default', async () => { await checkDefaultBrowser(true); return isDefaultBrowser; });
 
 // ---------- app ----------
@@ -1408,6 +1615,16 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
       setupDownloads(s, isPrivate);
     }
 
+    // Look like plain Chrome to websites (some sites, e.g. Google sign-in, refuse "Electron").
+    const ua = session.defaultSession.getUserAgent().replace(/\s(Electron|cloudbrowser|CloudBrowser)\/\S+/g, '');
+    app.userAgentFallback = ua;
+    for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) session.fromPartition(p).setUserAgent(ua);
+
+    nativeTheme.on('updated', () => {
+      for (const w of windows) { try { w.win.setTitleBarOverlay(titleBarColors(w.incognito)); } catch {} }
+    });
+
+    await setupExtensions();
     startWindows(argUrl(process.argv));
     setupUpdater();
     setupAdblock();
@@ -1420,6 +1637,29 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
 }
 
 // ---------- automated smoke test (CI only: CLOUD_SMOKE=1) ----------
+
+function powershell(script) {
+  return new Promise(resolve => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+    { windowsHide: true, timeout: 30000 }, (err, out, errOut) => resolve(err ? 'ERR ' + err.message + ' ' + errOut : String(out))));
+}
+const MOUSE_PS = `Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class M {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[M]::SetProcessDPIAware() | Out-Null
+`;
+function realDrag(x, y, dx, dy) {
+  return powershell(MOUSE_PS + `[M]::SetCursorPos(${x},${y}); Start-Sleep -m 250; [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); Start-Sleep -m 250
+for ($i = 1; $i -le 12; $i++) { [M]::SetCursorPos(${x} + [int](${dx} * $i / 12), ${y} + [int](${dy} * $i / 12)); Start-Sleep -m 40 }
+Start-Sleep -m 250; [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero); 'ok'`);
+}
+function realClick(x, y) {
+  return powershell(MOUSE_PS + `[M]::SetCursorPos(${x},${y}); Start-Sleep -m 250; [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); Start-Sleep -m 80; [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero); 'ok'`);
+}
 
 async function smokeTest() {
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -1439,90 +1679,123 @@ async function smokeTest() {
       shotImg(name, src.thumbnail);
     } catch (e) { S('screen capture failed', e.message); }
   };
-  try {
-    await wait(5000);
-    let w = currentWindow();
-    S('version', app.getVersion(), 'windows', windows.size, 'tabs', w.tabs.length, 'adblock', !!blocker, 'home', homeUrl());
-    let t = activeTab(w);
-    S('first tab', tabUrl(t), JSON.stringify(tabInfo(t).title));
-    await screen('home');
-    const nt = await t.view.webContents.executeJavaScript('document.body.innerText.slice(0, 400)').catch(e => 'ERR ' + e.message);
-    S('home text', JSON.stringify(nt));
+  const step = async (name, fn) => { try { await fn(); } catch (e) { S('STEP FAILED', name, e && e.stack || String(e)); } };
+  const scale = require('electron').screen.getPrimaryDisplay().scaleFactor;
 
+  await wait(5000);
+  const w = currentWindow();
+  w.win.setBounds({ x: 60, y: 40, width: 1100, height: 700 });
+  w.win.focus();
+  await wait(800);
+
+  await step('basics', async () => {
+    S('version', app.getVersion(), 'windows', windows.size, 'tabs', w.tabs.length, 'adblock', !!blocker, 'extensions', !!extensions, 'scale', scale);
+    S('user agent', session.fromPartition(NORMAL_PARTITION).getUserAgent());
+    await screen('titlebar');
+    const t = activeTab(w);
     load(t.view.webContents, 'https://example.com/');
-    await wait(3500);
-    S('example title', t.view.webContents.getTitle(), 'history', history.data.items.length);
-    toggleBookmark(t);
-    S('bookmarked', isBookmarked(tabUrl(t)));
-    S('suggest exam', suggest('exam', false));
-    S('toUrl', toUrl('cats and dogs'), toUrl('bbc.co.uk'), toUrl('C:\\Users\\x\\page.html'));
-    S('argUrl file', argUrl([process.execPath, ...(app.isPackaged ? [] : ['.']), path.join(__dirname, 'pages', 'settings.html')]));
-
-    createTab(w, 'https://www.theverge.com/');
-    await wait(9000);
-    S('ad-heavy page blocked', activeTab(w).blocked, 'total', settings.data.blockedTotal);
-
+    await wait(3000);
+    S('example title', t.view.webContents.getTitle());
+    S('cloud api exposed on normal website?', await t.view.webContents.executeJavaScript('typeof window.cloud'));
     const before = w.tabs.length;
-    await w.tabs[0].view.webContents.executeJavaScript(`window.open('https://example.net/'); 1`);
+    await t.view.webContents.executeJavaScript(`window.open('https://example.net/'); 1`);
     await wait(800);
-    S('pop-up without click blocked?', w.tabs.length === before, 'popupsBlocked', popupsBlocked);
+    S('pop-up without click blocked?', w.tabs.length === before);
+  });
 
-    for (const p of ['settings', 'history', 'bookmarks', 'downloads']) {
-      openInternal(w, p);
-      await wait(1800);
-      const wc = activeTab(w).view.webContents;
-      const text = await wc.executeJavaScript('document.body.innerText.slice(0, 200)').catch(e => 'ERR ' + e.message);
-      S('page', p, wc.getURL(), 'text', JSON.stringify(text));
+  await step('drag window by tab strip', async () => {
+    const b0 = w.win.getBounds();
+    const cb = w.win.getContentBounds();
+    const x = Math.round((cb.x + cb.width - 260) * scale), y = Math.round((cb.y + 14) * scale);
+    S('drag result', (await realDrag(x, y, 180, 120)).trim());
+    await wait(800);
+    const b1 = w.win.getBounds();
+    S('window moved by dragging the tab strip?', b1.x !== b0.x || b1.y !== b0.y, JSON.stringify(b0), '->', JSON.stringify(b1));
+    await screen('after-drag');
+  });
+
+  await step('extensions', async () => {
+    for (const r of RECOMMENDED_EXTENSIONS) {
+      const res = await installExtension(r.id);
+      S('install', r.name, JSON.stringify(res));
     }
-    S('cloud api exposed on normal website?', await w.tabs[0].view.webContents.executeJavaScript('typeof window.cloud').catch(() => 'ERR'));
-
-    // home page again with history
-    createTab(w, NEWTAB_URL);
+    await wait(3000);
+    S('installed', listExtensions().installed.map(x => `${x.name} ${x.version}`));
+    S('running service workers', Object.keys(extSession().serviceWorkers.getAllRunning()).length);
+    openInternal(w, 'extensions');
     await wait(2000);
-    S('top sites', topSites().map(s => s.host));
+    await screen('extensions-page');
+    const info = await w.ui.webContents.executeJavaScript(`(() => {
+      const l = document.querySelector('browser-action-list');
+      if (!l) return { list: false };
+      const els = [...(l.shadowRoot ? l.shadowRoot.querySelectorAll('*') : [])].filter(e => (e.getAttribute('part') || '').includes('action'));
+      return { list: true, actions: els.map(e => { const r = e.getBoundingClientRect(); return { title: e.title || e.getAttribute('aria-label') || '', x: r.x + r.width / 2, y: r.y + r.height / 2 }; }) };
+    })()`);
+    S('toolbar extension buttons', JSON.stringify(info));
+    const bw = (info.actions || []).find(a => /bitwarden/i.test(a.title)) || (info.actions || [])[0];
+    if (bw) {
+      const cb = w.win.getContentBounds();
+      S('click', (await realClick(Math.round((cb.x + bw.x) * scale), Math.round((cb.y + bw.y) * scale))).trim());
+      await wait(4000);
+      await screen('extension-popup');
+      await realClick(Math.round((cb.x + 500) * scale), Math.round((cb.y + 400) * scale));
+      await wait(500);
+    }
+    const t = activeTab(w);
+    load(t.view.webContents, 'https://www.roblox.com/');
+    await wait(7000);
+    await screen('roblox');
+    load(t.view.webContents, 'https://chromewebstore.google.com/detail/hbkpclpemjeibhioopcebchdmohaieln');
+    await wait(7000);
+    await screen('web-store');
+  });
 
-    // incognito window
+  await step('vertical tabs', async () => {
+    createTab(w, 'https://example.org/');
+    createTab(w, NEWTAB_URL);
+    setSetting('verticalTabs', true);
+    await wait(1500);
+    S('page rect', w.pageX, w.pageY);
+    await screen('vertical');
+    setSetting('sidebarCollapsed', true);
+    await wait(1000);
+    S('page rect collapsed', w.pageX, w.pageY);
+    await screen('vertical-collapsed');
+    setSetting('sidebarCollapsed', false);
+    setSetting('verticalTabs', false);
+    await wait(800);
+    S('page rect horizontal', w.pageX, w.pageY);
+  });
+
+  await step('custom shortcuts', async () => {
+    settings.data.shortcuts = [
+      { title: 'Roblox', url: 'https://www.roblox.com/' }, { title: 'YouTube', url: 'https://www.youtube.com/' },
+      { title: 'Bitwarden', url: 'https://vault.bitwarden.com/' }, { title: 'Proton', url: 'https://proton.me/' },
+      { title: 'BBC', url: 'https://www.bbc.co.uk/' },
+    ];
+    setSetting('shortcutsMode', 'custom');
+    const t = activeTab(w);
+    load(t.view.webContents, NEWTAB_URL);
+    await wait(2500);
+    await t.view.webContents.executeJavaScript(`document.getElementById('customize').click()`);
+    await wait(600);
+    await screen('custom-shortcuts');
+    S('home tiles', await t.view.webContents.executeJavaScript(`[...document.querySelectorAll('.site .name')].map(e => e.textContent).join(', ')`));
+  });
+
+  await step('incognito title bar', async () => {
     const iw = newWindow(true);
     await wait(3000);
-    S('incognito window', iw.incognito, 'tabs', iw.tabs.length, 'url', tabUrl(activeTab(iw)), 'windows', windows.size);
-    const it = activeTab(iw);
-    const itext = await it.view.webContents.executeJavaScript('document.body.innerText.slice(0, 300)').catch(e => 'ERR ' + e.message);
-    S('incognito home text', JSON.stringify(itext));
-    await screen('incognito-home');
-    load(it.view.webContents, 'https://www.theverge.com/');
-    await wait(8000);
-    S('incognito blocked', it.blocked, 'history has verge visits', history.data.items.filter(h => h.url.includes('theverge')).length);
-    S('incognito suggest has history?', suggest('verge', true).length, 'normal', suggest('verge', false).length);
-    S('incognito cookies', (await session.fromPartition(PRIVATE_PARTITION).cookies.get({})).length);
+    iw.win.setBounds({ x: 120, y: 90, width: 1000, height: 650 });
+    await wait(800);
+    await screen('incognito');
+    S('incognito has extension buttons?', await iw.ui.webContents.executeJavaScript(`!!document.querySelector('browser-action-list')`));
     iw.win.close();
-    await wait(1500);
-    S('after closing incognito: windows', windows.size, 'incognito cookies', (await session.fromPartition(PRIVATE_PARTITION).cookies.get({})).length);
+    await wait(800);
+  });
 
-    // default browser registration (installed app only)
-    if (app.isPackaged) {
-      const q1 = await reg(['query', `HKCU\\Software\\Classes\\${PROG_ID}\\shell\\open\\command`, '/ve']);
-      const q2 = await reg(['query', 'HKCU\\Software\\Clients\\StartMenuInternet\\CloudBrowser\\Capabilities\\URLAssociations']);
-      const q3 = await reg(['query', 'HKCU\\Software\\RegisteredApplications', '/v', 'CloudBrowser']);
-      S('reg command', JSON.stringify((q1 || '').trim()));
-      S('reg urls', JSON.stringify((q2 || '').trim()));
-      S('reg registered', JSON.stringify((q3 || '').trim()));
-      S('isDefaultBrowser', isDefaultBrowser);
-      await wait(500);
-      await screen('default-banner');
-    }
-
-    // second normal window + session
-    const w2 = newWindow(false);
-    await wait(2000);
-    load(activeTab(w2).view.webContents, 'https://example.org/');
-    await wait(2500);
-    saveSession(true);
-    S('session', sessionStore.data);
-    S('DONE');
-  } catch (e) {
-    S('ERROR', e && e.stack || String(e));
-  } finally {
-    flushAll();
-    setTimeout(() => app.exit(0), 500);
-  }
+  await step('session', async () => { saveSession(true); S('session', sessionStore.data); });
+  S('DONE');
+  flushAll();
+  setTimeout(() => app.exit(0), 500);
 }
