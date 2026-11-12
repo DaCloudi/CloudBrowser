@@ -143,6 +143,7 @@ let nextDownloadId = 1;
 let downloadsThisRun = 0;
 let isDefaultBrowser = null; // null = unknown / not applicable
 let extensions = null;        // ElectronChromeExtensions instance (normal windows only)
+let addingTab = false;
 let vpn = null;
 const readerCache = new Map(); // id -> article extracted for reader mode
 let nextReaderId = 1;
@@ -492,7 +493,11 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
   if (w.overlayOpen) w.win.contentView.addChildView(view, Math.max(0, w.win.contentView.children.indexOf(w.ui)));
   else w.win.contentView.addChildView(view); // above the UI view
   wireTab(tab);
-  if (extensions && !w.incognito) { try { extensions.addTab(view.webContents, w.win); } catch (e) { log('extensions.addTab failed', e.message); } }
+  if (extensions && !w.incognito) {
+    addingTab = true; // the extension system may "select" tabs as it learns about them; don't wake them for that
+    try { extensions.addTab(view.webContents, w.win); } catch (e) { log('extensions.addTab failed', e.message); }
+    finally { addingTab = false; }
+  }
   layout(w);
 
   if (!lazy) load(view.webContents, url);
@@ -1228,7 +1233,7 @@ async function setupExtensions() {
           const t = createTab(w, details.url || homeUrl(), { activate: details.active !== false });
           return [t.view.webContents, w.win];
         },
-        selectTab: (wc) => { const t = tabByContents(wc); if (t) { switchTab(t.w, t.id); t.w.win.focus(); } },
+        selectTab: (wc) => { if (addingTab) return; const t = tabByContents(wc); if (t && t.id !== t.w.activeId) { switchTab(t.w, t.id); t.w.win.focus(); } },
         removeTab: (wc) => { const t = tabByContents(wc); if (t) closeTab(t.id); },
         createWindow: async (details) => {
           const urls = details.url ? [].concat(details.url) : [homeUrl()];
@@ -1461,6 +1466,7 @@ function setupPrivacyHeaders() {
 // ---------- sleeping tabs ----------
 
 function wakeTab(t) {
+  if (SMOKE) log('[SMOKE] wake', hostOf(tabUrl(t)), new Error().stack.split('\n').slice(2, 6).map(x => x.trim()).join(' < '));
   t.sleeping = false;
   const wc = t.view.webContents;
   if (t.lazyUrl) { const u = t.lazyUrl; t.lazyUrl = null; load(wc, u); }
