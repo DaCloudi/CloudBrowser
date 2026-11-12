@@ -1252,6 +1252,14 @@ async function smokeTest() {
     await wait(1500);
     S('overlay open', overlayOpen, await ui.webContents.executeJavaScript(`JSON.stringify({ ae: document.activeElement && document.activeElement.id, body: document.body.className, rows: document.querySelectorAll('.sg').length })`));
     await shot('suggest-dark');
+    try {
+      const { desktopCapturer } = require('electron');
+      const [src] = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 800 } });
+      const b64 = src.thumbnail.toJPEG(70).toString('base64');
+      log('[SHOT-BEGIN screen-suggest]');
+      for (let i = 0; i < b64.length; i += 3000) log('[SHOT] ' + b64.slice(i, i + 3000));
+      log('[SHOT-END screen-suggest]');
+    } catch (e) { S('screen capture failed', e.message); }
     await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await ui.webContents.executeJavaScript(`document.getElementById('address').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await wait(500);
