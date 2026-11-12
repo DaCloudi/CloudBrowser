@@ -25,6 +25,7 @@ const send = (method, params = {}) => new Promise(r => { const i = ++id; pending
 const evalJs = async (expr) => (await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.value;
 await send('Page.navigate', { url: 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/' });
 await wait(6000);
+console.log('[BASELINE-FP] ' + await evalJs(fs.readFileSync(new URL('./fingerprint.js', import.meta.url), 'utf8')));
 await evalJs(`document.querySelector('#identifierId') && document.querySelector('#identifierId').focus()`);
 await send('Input.insertText', { text: 'cloudbrowser.signin.test.4821@gmail.com' });
 await wait(800);

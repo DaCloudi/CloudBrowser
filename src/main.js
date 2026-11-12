@@ -2403,6 +2403,7 @@ async function smokeTest() {
     load(wc, 'https://accounts.google.com/ServiceLogin?hl=en&continue=https://www.youtube.com/');
     await waitFor(() => !wc.isLoading(), 20000);
     await wait(3000);
+    try { log('[SMOKE-FP] ' + await wc.executeJavaScript(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'fingerprint.js'), 'utf8'))); } catch (e) { S('fingerprint failed', e.message); }
     await wc.executeJavaScript(`document.querySelector('#identifierId') && document.querySelector('#identifierId').focus()`);
     await wait(500);
     wc.insertText('cloudbrowser.signin.test.4821@gmail.com');
