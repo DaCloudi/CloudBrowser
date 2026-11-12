@@ -76,12 +76,17 @@ const DEFAULT_SETTINGS = {
   vpnWgConfigName: '',
   adblockAllowlist: [],         // hosts where the ad blocker is switched off
   pinnedExtensions: [],         // extension ids shown directly in the toolbar
+  sleepAfter: 30,               // minutes before an unused tab sleeps (0 = never)
+  stripTracking: true,          // remove tracking codes (utm_…, fbclid, …) from links
+  sendGpc: true,                // tell sites "do not sell or share my data" (Sec-GPC, DNT)
+  incognitoVpn: false,          // incognito windows always go through the VPN
+  incognitoScreenProtection: true, // hide incognito windows from screenshots/recordings
   clearOnExit: false,
   shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
   window: null,               // { width, height, maximized }
 };
 const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
-  'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions']);
+  'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn']);
 
 // Shown on the home page until there's enough history to replace them.
 const DEFAULT_SITES = [
@@ -273,7 +278,8 @@ function tabInfo(t) {
   const isNewtab = url.startsWith(NEWTAB_URL);
   return {
     id: t.id,
-    title: isNewtab ? (t.private ? 'New incognito tab' : 'New tab') : (wc.getTitle() || (url.startsWith('cloud://') ? '' : url) || 'New tab'),
+    title: isNewtab ? (t.private ? 'New incognito tab' : 'New tab') : ((t.sleeping && t.sleepTitle) || wc.getTitle() || (url.startsWith('cloud://') ? '' : url) || 'New tab'),
+    sleeping: !!t.sleeping,
     url,
     favicon: t.favicon || null,
     loading: wc.isLoading(),
@@ -351,8 +357,8 @@ function setOverlay(w, open) {
 function titleBarColors(incognito) {
   if (incognito) return { color: '#15111e', symbolColor: '#ece6fb', height: TITLEBAR_HEIGHT };
   return nativeTheme.shouldUseDarkColors
-    ? { color: '#161a21', symbolColor: '#e6ebf3', height: TITLEBAR_HEIGHT }
-    : { color: '#dfe8f5', symbolColor: '#1f2a3c', height: TITLEBAR_HEIGHT };
+    ? { color: '#122347', symbolColor: '#e8eefc', height: TITLEBAR_HEIGHT }
+    : { color: '#2b67e3', symbolColor: '#ffffff', height: TITLEBAR_HEIGHT };
 }
 
 // ---------- windows ----------
@@ -367,8 +373,9 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     minHeight: 320,
     title: incognito ? 'CloudBrowser (Incognito)' : 'CloudBrowser',
     icon: path.join(__dirname, 'ui', 'icon.png'),
-    backgroundColor: incognito ? '#1d1828' : (nativeTheme.shouldUseDarkColors ? '#1c2029' : '#e6edf7'),
+    backgroundColor: incognito ? '#1d1828' : (nativeTheme.shouldUseDarkColors ? '#122347' : '#2b67e3'),
     autoHideMenuBar: true,
+    show: false, // shown once the toolbar has drawn (no blank flash)
     // Tabs live in the title bar; Windows draws the minimise/maximise/close buttons on top.
     titleBarStyle: 'hidden',
     titleBarOverlay: titleBarColors(incognito),
@@ -382,8 +389,8 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     pageX: 0, pageY: 84, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
-  if (!cur && saved.maximized && !incognito) w.win.maximize();
   windows.add(w);
+  if (incognito && settings.data.incognitoScreenProtection) w.win.setContentProtection(true);
   lastFocused = w;
   if (!incognito) sessionFrozen = false;
 
@@ -403,14 +410,21 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     w.ui.webContents.on('console-message', (ev) => log('[ui console]', ev.message));
     w.ui.webContents.on('preload-error', (_e, p, err) => log('[ui preload-error]', p, String(err)));
   }
-  w.ui.webContents.once('did-finish-load', () => {
+  w.ui.webContents.once('did-finish-load', async () => {
+    // Incognito through the VPN: set up the kill switch before the first page loads.
+    if (incognito && vpn) await vpn.setIncognitoOpen(true);
+    if (!windows.has(w)) return;
     const list = urls && urls.length ? urls : [homeUrl()];
+    const activeIdx = Math.min(active, list.length - 1);
     list.forEach((u, i) => {
       const item = typeof u === 'string' ? { url: u } : u;
-      createTab(w, item.url, { activate: i === Math.min(active, list.length - 1), pinned: !!item.pinned });
+      // Only the visible tab loads now; the others load when first clicked (fast startup).
+      createTab(w, item.url, { activate: i === activeIdx, pinned: !!item.pinned, lazy: i !== activeIdx && list.length > 1, title: item.title, favicon: item.favicon });
     });
     layout(w);
     pushState(w);
+    w.win.show();
+    if (!cur && saved.maximized && !incognito) w.win.maximize();
     if (tabUrl(activeTab(w)).startsWith(NEWTAB_URL)) focusAddress(w);
   });
 
@@ -438,6 +452,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
       s.clearStorageData().catch(() => {});
       s.clearCache().catch(() => {});
       privatePermissions.clear();
+      if (vpn) vpn.setIncognitoOpen(false);
     }
     if (windows.size === 0) { flushAll(); app.quit(); }
   });
@@ -446,7 +461,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
 
 // ---------- tabs ----------
 
-function createTab(w, url, { activate = true, openerId = null, pinned = false } = {}) {
+function createTab(w, url, { activate = true, openerId = null, pinned = false, lazy = false, title = null, favicon = null } = {}) {
   url = url || homeUrl();
   const view = new WebContentsView({
     webPreferences: {
@@ -458,8 +473,10 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false } 
     },
   });
   view.setBackgroundColor(w.incognito ? '#1d1828' : '#ffffff');
-  const tab = { id: nextTabId++, w, view, private: w.incognito, favicon: null, blocked: 0, failedUrl: null, initialUrl: url, histEntry: null, lastInput: 0, pinned };
-  if (vpn) vpn.protectContents(view.webContents);
+  url = cleanUrl(url);
+  const tab = { id: nextTabId++, w, view, private: w.incognito, favicon: lazy ? favicon : null, blocked: 0, failedUrl: null, initialUrl: url, histEntry: null, lastInput: 0, pinned,
+    lastActive: Date.now(), sleeping: lazy, lazyUrl: lazy ? url : null, sleepTitle: lazy ? title : null };
+  if (vpn) vpn.protectContents(view.webContents, w.incognito);
 
   const openerIdx = openerId ? w.tabs.findIndex(t => t.id === openerId) : -1;
   if (openerIdx >= 0) {
@@ -478,7 +495,7 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false } 
   if (extensions && !w.incognito) { try { extensions.addTab(view.webContents, w.win); } catch (e) { log('extensions.addTab failed', e.message); } }
   layout(w);
 
-  load(view.webContents, url);
+  if (!lazy) load(view.webContents, url);
   if (activate || !w.activeId) switchTab(w, tab.id);
   else view.setVisible(false);
   sendState(w);
@@ -519,7 +536,7 @@ function wireTab(tab) {
     load(wc, 'data:text/html;charset=utf-8,' + encodeURIComponent(errorPage("Can't reach this page", desc, failedUrl)));
   });
   wc.on('render-process-gone', (_e, details) => {
-    if (details.reason === 'clean-exit') return;
+    if (details.reason === 'clean-exit' || tab.sleeping) return;
     const url = tabUrl(tab);
     tab.failedUrl = url;
     load(wc, 'data:text/html;charset=utf-8,' + encodeURIComponent(errorPage('This tab crashed', details.reason, url)));
@@ -546,9 +563,16 @@ function wireTab(tab) {
         },
       };
     }
-    createTab(tab.w, url, { activate: disposition !== 'background-tab', openerId: tab.id });
+    createTab(tab.w, cleanUrl(url), { activate: disposition !== 'background-tab', openerId: tab.id });
     return { action: 'deny' };
   });
+  const stripOnNavigate = (e, url, isMain) => {
+    if (isMain === false) return;
+    const clean = cleanUrl(url);
+    if (clean !== url) { e.preventDefault(); load(wc, clean); }
+  };
+  wc.on('will-navigate', (e) => stripOnNavigate(e, e.url, e.isMainFrame));
+  wc.on('will-redirect', (e) => stripOnNavigate(e, e.url, e.isMainFrame));
   wc.on('before-input-event', (event, input) => { if (handleShortcut(tab.w, input)) event.preventDefault(); });
   wc.on('context-menu', (_e, params) => showContextMenu(tab, params));
   wc.on('found-in-page', (_e, r) => { if (tab.id === tab.w.activeId) uiSend(tab.w, 'find-result', { active: r.activeMatchOrdinal, matches: r.matches }); });
@@ -579,7 +603,11 @@ function switchTab(w, id) {
     if (prev) prev.view.webContents.stopFindInPage('clearSelection');
     uiSend(w, 'find-close');
   }
+  const prevTab = activeTab(w);
+  if (prevTab && prevTab.id !== id) prevTab.lastActive = Date.now();
   w.activeId = id;
+  t.lastActive = Date.now();
+  if (t.sleeping) wakeTab(t);
   for (const x of w.tabs) x.view.setVisible(x.id === id);
   if (extensions && !w.incognito) { try { extensions.selectTab(t.view.webContents); } catch {} }
   if (!w.overlayOpen) t.view.webContents.focus();
@@ -676,7 +704,7 @@ function suggest(q, incognito, w) {
   for (const t of allTabs()) {
     if (t.private !== !!incognito || (w && t.id === w.activeId)) continue;
     const u = tabUrl(t);
-    const title = t.view.webContents.getTitle();
+    const title = (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle();
     if (!/^(https?|cloud):/.test(u) || u.startsWith(NEWTAB_URL) || !(hit(title) || hit(stripScheme(u)))) continue;
     seen.add(u);
     out.push({ type: 'tab', url: u, title: title || u, tabId: t.id });
@@ -763,7 +791,8 @@ function toggleBookmark(tab) {
 function saveSession(final = false) {
   if (!sessionStore || (quitting && !final) || (sessionFrozen && !final)) return;
   const wins = [...windows].filter(w => !w.incognito && w.tabs.length).map(w => ({
-    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned })).filter(x => x.url && !x.url.startsWith('data:')),
+    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned, title: (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle() || '', favicon: t.favicon || null }))
+      .filter(x => x.url && !x.url.startsWith('data:')),
     active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId)),
   })).filter(x => x.tabs.length);
   if (!wins.length && sessionFrozen) return;
@@ -952,9 +981,10 @@ async function setupAdblock() {
     try { if (Date.now() - fs.statSync(cache).mtimeMs > 4 * 86400000) fs.unlinkSync(cache); } catch {}
     const caching = { path: cache, read: fs.promises.readFile, write: fs.promises.writeFile };
     const E = mod.ElectronBlocker;
+    const viaSession = (url, opts) => session.defaultSession.fetch(url, opts); // honours the VPN
     blocker = typeof E.fromPrebuiltFull === 'function'
-      ? await E.fromPrebuiltFull(fetch, caching)
-      : await E.fromPrebuiltAdsAndTracking(fetch, caching);
+      ? await E.fromPrebuiltFull(viaSession, caching)
+      : await E.fromPrebuiltAdsAndTracking(viaSession, caching);
 
     // Per-site switch: skip blocking on pages whose site is on the allowlist.
     const origMatch = blocker.match.bind(blocker);
@@ -1335,13 +1365,13 @@ function setVpnCountry(c) {
   if (!vpn || !vpn.info().countries.some(([id]) => id === c)) return;
   settings.data.vpnCountry = c;
   settings.save();
-  if (settings.data.vpnEnabled && vpn.mode === 'tor') vpn.start(); else vpnChanged(vpn.info());
+  if (vpn.mode === 'tor') vpn.restart(); else vpnChanged(vpn.info());
 }
 function setVpnMode(m) {
   if (!vpn || !['tor', 'wireguard'].includes(m)) return;
   settings.data.vpnMode = m;
   settings.save();
-  if (settings.data.vpnEnabled) vpn.start(); else vpnChanged(vpn.info());
+  vpn.restart();
 }
 async function importWgConfig(w) {
   const { canceled, filePaths } = await dialog.showOpenDialog(w && w.win, {
@@ -1351,7 +1381,7 @@ async function importWgConfig(w) {
   if (canceled || !filePaths[0]) return false;
   try {
     vpn.importWireGuardConfig(filePaths[0]);
-    if (settings.data.vpnEnabled) vpn.start();
+    vpn.restart();
     return true;
   } catch (e) {
     dialog.showMessageBox(w && w.win, { type: 'warning', title: 'CloudBrowser', message: 'Couldn’t use that file', detail: e.message });
@@ -1372,6 +1402,112 @@ function togglePin(t) {
   w.tabs.splice(t.pinned ? pinnedCount : pinnedCount, 0, t);
   sendState(w);
   saveSession();
+}
+
+// ---------- privacy: tracking codes, "do not track", referrers ----------
+
+const TRACKING_PARAMS = new Set([
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_name', 'utm_reader', 'utm_social', 'utm_brand',
+  'fbclid', 'gclid', 'gclsrc', 'dclid', 'gbraid', 'wbraid', 'msclkid', 'yclid', 'twclid', 'ttclid', 'li_fat_id', 'igshid', 'igsh',
+  'mc_cid', 'mc_eid', '_hsenc', '_hsmi', 'hsctatracking', 'mkt_tok', 'oly_anon_id', 'oly_enc_id', 'vero_id', 'vero_conv',
+  'rb_clickid', 's_cid', '__s', 'ref_src', 'ref_url', '_openstat', 'wickedid', 'spm', 'scm', 'srsltid', 'epik', 'pk_campaign', 'pk_kwd',
+]);
+const SHARE_PARAMS_BY_HOST = [[/(^|\.)(youtube\.com|youtu\.be|spotify\.com)$/, ['si', 'feature', 'pp']], [/(^|\.)(twitter\.com|x\.com)$/, ['s', 't']]];
+
+// Remove tracking codes from a link (utm_source, fbclid, gclid, …).
+function cleanUrl(url) {
+  if (!settings || !settings.data.stripTracking || typeof url !== 'string' || !/^https?:/i.test(url) || !url.includes('?')) return url;
+  try {
+    const u = new URL(url);
+    if (isSearchResult(url)) return url;
+    let changed = false;
+    const extra = (SHARE_PARAMS_BY_HOST.find(([re]) => re.test(u.hostname)) || [null, []])[1];
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.has(key.toLowerCase()) || extra.includes(key)) { u.searchParams.delete(key); changed = true; }
+    }
+    return changed ? u.toString() : url;
+  } catch { return url; }
+}
+
+function siteOf(host) {
+  const parts = (host || '').toLowerCase().split('.').filter(Boolean);
+  if (parts.length <= 2) return parts.join('.');
+  const two = parts.slice(-2).join('.');
+  return /^(co|com|org|net|gov|ac|edu)\.[a-z]{2}$/.test(two) ? parts.slice(-3).join('.') : two;
+}
+
+// "Do not sell or share my data" signals, and less revealing referrers. Incognito never tells
+// another site which page you came from.
+function setupPrivacyHeaders() {
+  for (const [p, isPrivate] of [[NORMAL_PARTITION, false], [PRIVATE_PARTITION, true]]) {
+    session.fromPartition(p).webRequest.onBeforeSendHeaders((details, callback) => {
+      const h = details.requestHeaders;
+      if (settings.data.sendGpc) { h['Sec-GPC'] = '1'; h['DNT'] = '1'; }
+      const ref = h.Referer || h.referer;
+      if (ref) {
+        try {
+          const from = new URL(ref), to = new URL(details.url);
+          if (siteOf(from.hostname) !== siteOf(to.hostname)) {
+            delete h.Referer; delete h.referer;
+            if (!isPrivate) h.Referer = from.origin + '/';
+          }
+        } catch {}
+      }
+      callback({ requestHeaders: h });
+    });
+  }
+}
+
+// ---------- sleeping tabs ----------
+
+function wakeTab(t) {
+  t.sleeping = false;
+  const wc = t.view.webContents;
+  if (t.lazyUrl) { const u = t.lazyUrl; t.lazyUrl = null; load(wc, u); }
+  else wc.reload();
+}
+
+// Free a tab's memory. Its history stays, and it reloads when you click it.
+function sleepTab(t, force = false) {
+  const wc = t.view.webContents;
+  if (t.sleeping || t.id === t.w.activeId || wc.isDestroyed() || wc.isCrashed()) return false;
+  if (!force && (wc.isCurrentlyAudible() || wc.isLoading() || wc.isDevToolsOpened() || liveDownloads.size)) return false;
+  // Pages from the same site can share one process; only stop it if every page in it can sleep.
+  const pid = wc.getOSProcessId();
+  const sharers = allTabs().filter(o => o !== t && !o.sleeping && !o.view.webContents.isDestroyed() && o.view.webContents.getOSProcessId() === pid);
+  if (sharers.some(o => o.id === o.w.activeId || o.view.webContents.isCurrentlyAudible())) return false;
+  const { webContents: all } = require('electron');
+  if (all.getAllWebContents().some(o => o !== wc && !tabByContents(o) && !o.isDestroyed() && o.getOSProcessId() === pid)) return false;
+  for (const x of [t, ...sharers]) {
+    x.sleeping = true;
+    x.sleepTitle = x.view.webContents.getTitle() || x.sleepTitle;
+  }
+  wc.forcefullyCrashRenderer();
+  for (const x of new Set([t.w, ...sharers.map(o => o.w)])) sendState(x);
+  return true;
+}
+
+function sleepIdleTabs() {
+  const mins = settings.data.sleepAfter;
+  if (!mins) return;
+  const cutoff = Date.now() - mins * 60000;
+  for (const t of allTabs()) {
+    if (!t.sleeping && t.id !== t.w.activeId && t.lastActive < cutoff) sleepTab(t);
+  }
+}
+
+// ---------- faster loading: connect to the site while you're still typing ----------
+
+const preconnected = new Map();
+function preconnect(w, text) {
+  try {
+    const url = toUrl(String(text || ''));
+    if (!/^https?:/.test(url)) return;
+    const origin = new URL(url).origin;
+    if (Date.now() - (preconnected.get(origin) || 0) < 30000) return;
+    preconnected.set(origin, Date.now());
+    session.fromPartition(w.incognito ? PRIVATE_PARTITION : NORMAL_PARTITION).preconnect({ url: origin, numSockets: 1 });
+  } catch {}
 }
 
 // ---------- keyboard shortcuts ----------
@@ -1573,6 +1709,7 @@ function showTabMenu(w, id) {
     { label: 'Reload', click: () => wc.reload() },
     { label: 'Duplicate', click: () => createTab(w, tabUrl(t), { openerId: t.id }) },
     { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => togglePin(t) },
+    { label: 'Put tab to sleep', enabled: t.id !== w.activeId && !t.sleeping, click: () => sleepTab(t, true) },
     { label: 'Move to new window', enabled: w.tabs.length > 1, click: () => { const u = tabUrl(t); closeTab(id); createWindow({ incognito: w.incognito, urls: [u] }); } },
     { label: wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); } },
     { label: isBookmarked(tabUrl(t)) ? 'Remove bookmark' : 'Bookmark tab', click: () => toggleBookmark(t) },
@@ -1615,6 +1752,7 @@ function setSetting(key, value) {
   if (key === 'searchEngine' && !ENGINES[value]) return false;
   if (key === 'theme' && !['system', 'light', 'dark'].includes(value)) return false;
   if (key === 'shortcutsMode' && !['mostVisited', 'custom'].includes(value)) return false;
+  if (key === 'sleepAfter' && ![0, 5, 15, 30, 60, 120].includes(value)) return false;
   if (key === 'shortcutsMode' && value === 'custom' && !settings.data.shortcuts.length) {
     settings.data.shortcuts = topSites().map(x => ({ title: x.title, url: x.url })); // start from what's showing now
   }
@@ -1623,6 +1761,7 @@ function setSetting(key, value) {
   settings.save();
   if (key === 'theme') nativeTheme.themeSource = value;
   if (key === 'adblock') applyAdblock();
+  if (key === 'incognitoScreenProtection') for (const x of windows) if (x.incognito) x.win.setContentProtection(value);
   sendStateAll();
   pagesSend('page:settings', settings.data);
   return true;
@@ -1676,6 +1815,7 @@ function uiOn(channel, fn) {
 }
 
 function openUrl(w, url, newTab) {
+  url = cleanUrl(url);
   const t = activeTab(w);
   if (newTab || !t) { createTab(w, url); return; }
   load(t.view.webContents, url);
@@ -1767,7 +1907,10 @@ uiOn('address-menu', (w, hasSelection) => {
     { label: 'Copy page link', enabled: !!t && /^(https?|file):/.test(tabUrl(t)), click: () => clipboard.writeText(tabUrl(t)) },
   ]).popup({ window: w.win });
 });
-uiOn('vpn-toggle', () => { if (vpn) (settings.data.vpnEnabled ? vpn.stop() : vpn.start()); });
+uiOn('vpn-toggle', () => { if (vpn) vpn.setEnabled(!settings.data.vpnEnabled); });
+uiOn('vpn-new-ip', () => { if (vpn) vpn.restart(); });
+uiOn('vpn-incognito', (_w, on) => { if (vpn) vpn.setIncognitoVpn(!!on); });
+uiOn('preconnect', (w, text) => preconnect(w, text));
 uiOn('vpn-country', (_w, c) => setVpnCountry(c));
 uiOn('vpn-mode', (_w, m) => setVpnMode(m));
 uiOn('vpn-import', w => importWgConfig(w));
@@ -1904,7 +2047,8 @@ pageHandle('make-default', async () => { await makeDefaultBrowser(); return true
 pageHandle('extensions', () => listExtensions());
 pageHandle('reader-article', (_ctx, id) => readerCache.get(Number(id)) || null);
 pageHandle('vpn', () => (vpn ? vpn.info() : null));
-pageHandle('vpn-toggle', async () => { if (vpn) await (settings.data.vpnEnabled ? vpn.stop() : vpn.start()); return vpn.info(); });
+pageHandle('vpn-toggle', async () => { if (vpn) await vpn.setEnabled(!settings.data.vpnEnabled); return vpn.info(); });
+pageHandle('vpn-incognito', async (_ctx, on) => { if (vpn) await vpn.setIncognitoVpn(!!on); return vpn.info(); });
 pageHandle('vpn-country', (_ctx, c) => { setVpnCountry(c); return vpn.info(); });
 pageHandle('vpn-mode', (_ctx, m) => { setVpnMode(m); return vpn.info(); });
 pageHandle('vpn-import', async (ctx) => { await importWgConfig(ctx.tab && ctx.tab.w); return vpn.info(); });
@@ -1985,8 +2129,11 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
       for (const w of windows) { try { w.win.setTitleBarOverlay(titleBarColors(w.incognito)); } catch {} }
     });
 
-    vpn = new Vpn({ settings, partitions: [NORMAL_PARTITION, PRIVATE_PARTITION], log, onChange: vpnChanged });
-    if (settings.data.vpnEnabled) vpn.start(); // kill switch applies straight away
+    vpn = new Vpn({ settings, normalPartition: NORMAL_PARTITION, privatePartition: PRIVATE_PARTITION, log, onChange: vpnChanged });
+    await vpn.applyKillSwitch(); // nothing loads outside the VPN if it's switched on
+    if (settings.data.vpnEnabled) vpn.ensure();
+    setupPrivacyHeaders();
+    setInterval(sleepIdleTabs, 60 * 1000);
 
     await setupExtensions();
     startWindows(argUrl(process.argv));
@@ -2056,71 +2203,142 @@ async function smokeTest() {
     } catch (e) { S('screen capture failed', e.message); }
   };
   const step = async (name, fn) => { try { await fn(); } catch (e) { S('STEP FAILED', name, e && e.stack || String(e)); } };
-  const ui = (w, js) => w.ui.webContents.executeJavaScript(js);
+  const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
+  const text = (wc) => wc.executeJavaScript('document.body ? document.body.innerText : ""').catch(e => 'ERR ' + e.message);
+  const go = async (t, url, ms = 6000) => { load(t.view.webContents, url); await waitFor(() => !t.view.webContents.isLoading(), ms); await wait(400); };
+  const memMB = () => Math.round(app.getAppMetrics().reduce((n, m) => n + (m.memory ? m.memory.workingSetSize : 0), 0) / 1024);
+  const webrtc = (wc) => wc.executeJavaScript(`new Promise(res => {
+    const out = []; const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc.createDataChannel('x'); pc.onicecandidate = e => { if (e.candidate) out.push(e.candidate.candidate.split(' ').slice(4, 8).join(' ')); };
+    pc.createOffer().then(o => pc.setLocalDescription(o)); setTimeout(() => { pc.close(); res(out); }, 6000); })`).catch(e => ['ERR ' + e.message]);
 
-  await wait(5000);
+  await wait(4000);
   const w = currentWindow();
   w.win.setBounds({ x: 0, y: 0, width: 1024, height: 740 });
   w.win.focus();
-  await wait(800);
+  await wait(600);
+  const t = activeTab(w);
 
-  await step('home page (light, dark, incognito)', async () => {
+  await step('look: home + blue theme', async () => {
     S('version', app.getVersion());
-    load(activeTab(w).view.webContents, NEWTAB_URL);
-    await wait(2500);
+    await go(t, NEWTAB_URL);
     await screen('home-light');
     setSetting('theme', 'dark');
-    await wait(2000);
+    await wait(1500);
     await screen('home-dark');
     setSetting('theme', 'system');
-    const iw = newWindow(true);
-    await wait(2500);
-    iw.win.setBounds({ x: 40, y: 30, width: 980, height: 700 });
-    await wait(800);
-    await screen('home-incognito');
-    iw.win.close();
-    await wait(800);
+    openInternal(w, 'settings', '#privacy');
+    await wait(2000);
+    await screen('settings');
+    closeTab(activeTab(w).id);
   });
 
-  await step('closing the last tab keeps the window open', async () => {
-    while (w.tabs.length > 1) closeTab(w.tabs[w.tabs.length - 1].id);
-    const only = w.tabs[0];
-    load(only.view.webContents, 'https://example.com/');
-    await wait(2500);
-    closeTab(only.id);
-    await wait(1500);
-    S('after closing last tab: windows', windows.size, 'tabs', w.tabs.length, 'url', tabUrl(activeTab(w)), 'window alive', !w.win.isDestroyed());
-    const iw = newWindow(true);
-    await wait(2500);
-    closeTab(iw.tabs[0].id);
-    await wait(1200);
-    S('closing last incognito tab with a normal window open closes it:', !windows.has(iw), 'windows', windows.size);
-  });
-
-  await step('extensions folder', async () => {
-    for (const id of ['nngceckbapebfimnlniiiahkandclblb', 'hbkpclpemjeibhioopcebchdmohaieln', 'adbacgifemdbhdkfppmeilbgppmhaobf']) {
-      S('install', id, JSON.stringify(await installExtension(id)));
-    }
+  let realIp = null;
+  await step('privacy without VPN', async () => {
+    await go(t, 'https://api.ipify.org/?format=json');
+    realIp = (JSON.parse(await text(t.view.webContents) || '{}')).ip;
+    S('real IP', realIp);
+    openUrl(w, 'https://example.com/?utm_source=news&id=5&fbclid=abc123');
+    await waitFor(() => !t.view.webContents.isLoading(), 6000);
+    S('typed link cleaned ->', tabUrl(t));
+    await t.view.webContents.executeJavaScript(`location.href = 'https://example.org/?gclid=XYZ&q=2&utm_medium=email'`);
     await wait(3000);
-    S('action elements', await ui(w, `JSON.stringify(actionElements().map(e => ({ id: actionExtensionId(e), title: e.title, shown: e.style.display !== 'none', html: e.outerHTML.slice(0, 200) })))`));
-    await screen('toolbar-no-pins');
-    await ui(w, `document.getElementById('ext-btn').click()`);
-    await wait(1200);
-    await screen('ext-panel');
-    // pin Bitwarden from the panel
-    await ui(w, `[...document.querySelectorAll('.ep-row')].find(r => /bitwarden/i.test(r.textContent)).querySelector('button').click()`);
-    await wait(800);
-    S('pinned', JSON.stringify(settings.data.pinnedExtensions));
-    await ui(w, `closeExtPanel()`);
-    await wait(800);
-    S('shown after pin', await ui(w, `JSON.stringify(actionElements().map(e => [actionExtensionId(e), e.style.display !== 'none']))`));
-    await screen('toolbar-pinned');
-    // open RoPro (unpinned) from the panel
-    await ui(w, `document.getElementById('ext-btn').click()`);
-    await wait(1000);
-    await ui(w, `[...document.querySelectorAll('.ep-row')].find(r => /ropro/i.test(r.textContent)).click()`);
+    S('clicked link cleaned ->', tabUrl(t));
+    await go(t, 'https://example.com/');
+    await t.view.webContents.executeJavaScript(`location.href = 'https://httpbin.org/headers'`);
     await wait(4000);
-    await screen('ext-opened-from-panel');
+    S('headers sent (normal)', JSON.stringify(await text(t.view.webContents)).slice(0, 700));
+    S('WebRTC without VPN (expect no private 192.168/10.x addresses)', JSON.stringify(await webrtc(t.view.webContents)));
+    await go(t, 'https://www.theverge.com/', 12000);
+    S('ad blocker still blocking', t.blocked);
+  });
+
+  await step('sleeping tabs + lazy restore', async () => {
+    const w2 = createWindow({ urls: ['https://example.com/', 'https://en.wikipedia.org/wiki/Cloud', 'https://example.org/'], active: 0 });
+    await waitFor(() => w2.tabs.length === 3, 8000);
+    await wait(2500);
+    S('lazy restore: loaded?', w2.tabs.map(x => `${hostOf(tabUrl(x))}:${x.sleeping ? 'waiting' : 'loaded'}:${x.view.webContents.getURL() ? 'has-page' : 'empty'}`).join(', '));
+    switchTab(w2, w2.tabs[1].id);
+    await waitFor(() => !w2.tabs[1].view.webContents.isLoading(), 10000);
+    await wait(800);
+    S('after click: wiki title', w2.tabs[1].view.webContents.getTitle());
+    switchTab(w2, w2.tabs[0].id);
+    await wait(1000);
+    const before = memMB();
+    const ok = sleepTab(w2.tabs[1], true);
+    await wait(2500);
+    S('slept', ok, 'crashed renderer', w2.tabs[1].view.webContents.isCrashed(), 'memory MB', before, '->', memMB(), 'title kept', tabInfo(w2.tabs[1]).title);
+    await screen('sleeping-tab');
+    switchTab(w2, w2.tabs[1].id);
+    await waitFor(() => !w2.tabs[1].view.webContents.isLoading(), 10000);
+    await wait(800);
+    S('woke: title', w2.tabs[1].view.webContents.getTitle(), 'sleeping', w2.tabs[1].sleeping);
+    w2.win.close();
+    await wait(800);
+  });
+
+  await step('VPN: on, leaks, kill switch, reconnect, off', async () => {
+    w.win.focus();
+    await vpn.setEnabled(true);
+    await w.ui.webContents.executeJavaScript(`document.getElementById('vpn-btn').click()`).catch(() => {});
+    const ok = await waitFor(() => ['on', 'error'].includes(vpn.info().status), 240000);
+    S('vpn', ok, vpn.info().status, vpn.info().ip, vpn.info().location, vpn.info().error || '');
+    await screen('vpn-panel');
+    await w.ui.webContents.executeJavaScript(`document.getElementById('backdrop').dispatchEvent(new MouseEvent('mousedown'))`).catch(() => {});
+
+    await go(t, 'https://check.torproject.org/api/ip', 30000);
+    S('tab IP via VPN', await text(t.view.webContents), '(real IP was', realIp + ')');
+    await go(t, 'https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/', 60000);
+    S('.onion site (proves DNS goes through Tor):', JSON.stringify(t.view.webContents.getTitle()), tabUrl(t).slice(0, 60));
+    await go(t, 'https://example.com/', 30000);
+    const rtc = await webrtc(t.view.webContents);
+    S('WebRTC with VPN (expect nothing revealing)', JSON.stringify(rtc), 'contains real IP?', !!realIp && JSON.stringify(rtc).includes(realIp));
+    const own = await session.defaultSession.fetch('https://check.torproject.org/api/ip').then(r => r.text()).catch(e => 'ERR ' + e.message);
+    S("CloudBrowser's own traffic via VPN", own);
+
+    // Kill switch: cut the tunnel and try to load a page.
+    const pid = vpn.proc && vpn.proc.pid;
+    if (vpn.proc) vpn.proc.kill();
+    await wait(1200);
+    S('after tunnel killed: status', vpn.info().status, '|', vpn.info().error);
+    await go(t, 'https://api.ipify.org/?format=json', 15000);
+    const leaked = await text(t.view.webContents);
+    S('page while tunnel down:', JSON.stringify(leaked).slice(0, 160), 'real IP leaked?', !!realIp && leaked.includes(realIp));
+    const back = await waitFor(() => vpn.info().status === 'on' && vpn.proc && vpn.proc.pid !== pid, 240000);
+    S('auto-reconnected', back, vpn.info().ip);
+    const ip1 = vpn.info().ip;
+    await vpn.restart();
+    await waitFor(() => vpn.info().status === 'on', 240000);
+    S('new IP', ip1, '->', vpn.info().ip);
+
+    await vpn.setEnabled(false);
+    await go(t, 'https://check.torproject.org/api/ip', 15000);
+    S('VPN off', await text(t.view.webContents));
+  });
+
+  await step('incognito always via VPN', async () => {
+    await vpn.setIncognitoVpn(true);
+    S('status with no incognito open', vpn.info().status);
+    const iw = newWindow(true);
+    await waitFor(() => iw.tabs.length > 0, 10000);
+    const it = activeTab(iw);
+    const ok = await waitFor(() => vpn.info().status === 'on', 240000);
+    S('incognito vpn', ok, vpn.info().scope);
+    await go(it, 'https://check.torproject.org/api/ip', 30000);
+    S('incognito tab IP', await text(it.view.webContents));
+    await go(t, 'https://check.torproject.org/api/ip', 15000);
+    S('normal tab IP at the same time', await text(t.view.webContents));
+    await go(it, 'https://example.com/', 30000);
+    await it.view.webContents.executeJavaScript(`location.href = 'https://httpbin.org/headers'`);
+    await wait(9000);
+    S('incognito headers (no Referer expected)', JSON.stringify(await text(it.view.webContents)).slice(0, 600));
+    iw.win.setBounds({ x: 60, y: 40, width: 900, height: 640 });
+    await wait(800);
+    await screen('incognito-screen-protected');
+    iw.win.close();
+    await wait(2000);
+    S('after incognito closed: vpn', vpn.info().status);
+    await vpn.setIncognitoVpn(false);
   });
 
   S('DONE');

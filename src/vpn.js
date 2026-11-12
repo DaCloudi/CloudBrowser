@@ -1,15 +1,22 @@
 // CloudBrowser VPN
 //
-// Routes every tab (normal and incognito) through a local SOCKS5 proxy provided by one of:
+// Routes browsing through a local SOCKS5 proxy provided by one of:
 //   - Tor (bundled tor.exe), optionally pinned to an exit country
 //   - WireGuard (bundled wireproxy.exe) using a config file from the user's VPN provider,
 //     e.g. a free Proton VPN WireGuard config
 //
-// While the VPN is switched on but not yet connected, pages can't load (the proxy isn't
-// answering), so nothing leaks out over the normal connection ("kill switch").
+// Two independent switches decide which windows go through it:
+//   - "VPN on" (settings.vpnEnabled): every window, plus CloudBrowser's own background traffic
+//   - "Incognito through the VPN" (settings.incognitoVpn): incognito windows only
+//
+// Kill switch: whenever a window is meant to use the VPN, its traffic is pointed at the
+// local proxy *before* anything loads. If the VPN isn't connected (yet, or any more),
+// pages simply don't load - nothing ever falls back to your normal connection.
+// DNS goes through the VPN too (SOCKS5 with remote name resolution), and WebRTC is
+// limited so it can't reveal your real IP address.
 'use strict';
 
-const { app, session } = require('electron');
+const { app, session, webContents } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -24,14 +31,18 @@ const COUNTRIES = [
 ];
 
 class Vpn {
-  constructor({ settings, partitions, log, onChange }) {
+  constructor({ settings, normalPartition, privatePartition, log, onChange }) {
     this.settings = settings;
-    this.partitions = partitions;
+    this.normalPartition = normalPartition;
+    this.privatePartition = privatePartition;
     this.log = log || console.log;
     this.onChange = onChange || (() => {});
     this.proc = null;
     this.state = { status: 'off', progress: 0, ip: null, location: null, error: null };
     this.generation = 0;
+    this.incognitoOpen = false;
+    this.retries = 0;
+    this.proxied = { normal: false, private: false };
   }
 
   vendorDir(name) {
@@ -43,10 +54,19 @@ class Vpn {
   get port() { return this.mode === 'tor' ? TOR_PORT : WG_PORT; }
   get wgConfigPath() { return path.join(app.getPath('userData'), 'wireguard.conf'); }
 
+  // Which windows should go through the VPN right now?
+  wanted() {
+    const all = !!this.settings.data.vpnEnabled;
+    return { normal: all, private: all || (!!this.settings.data.incognitoVpn && this.incognitoOpen) };
+  }
+
   info() {
+    const want = this.wanted();
     return {
       ...this.state,
       enabled: !!this.settings.data.vpnEnabled,
+      incognitoVpn: !!this.settings.data.incognitoVpn,
+      scope: want.normal ? 'all' : want.private ? 'incognito' : 'none',
       mode: this.mode,
       country: this.settings.data.vpnCountry || 'auto',
       countries: COUNTRIES,
@@ -63,36 +83,48 @@ class Vpn {
 
   // ----- public -----
 
-  async start() {
-    const gen = ++this.generation;
-    this.stopProcess();
-    this.settings.data.vpnEnabled = true;
+  // Apply the kill switch for whatever is wanted. Await this before any window loads.
+  async applyKillSwitch() { await this.applyProxy(this.wanted()); }
+
+  async setEnabled(on) {
+    this.settings.data.vpnEnabled = !!on;
     this.settings.save();
-    this.set({ status: 'connecting', progress: 0, ip: null, location: null, error: null });
-    await this.applyProxy(true); // kill switch: traffic goes to the (not yet running) proxy
-    try {
-      if (this.mode === 'tor') await this.startTor(gen);
-      else await this.startWireGuard(gen);
-      if (gen !== this.generation) return;
-      this.set({ progress: 100 });
-      await this.verify(gen);
-    } catch (e) {
-      if (gen !== this.generation) return;
-      this.log('VPN failed:', e && e.message || e);
-      this.set({ status: 'error', error: String(e && e.message || e) });
+    await this.ensure();
+  }
+
+  async setIncognitoVpn(on) {
+    this.settings.data.incognitoVpn = !!on;
+    this.settings.save();
+    await this.ensure();
+  }
+
+  async setIncognitoOpen(open) {
+    if (this.incognitoOpen === open) return;
+    this.incognitoOpen = open;
+    await this.ensure();
+  }
+
+  // Start/stop the tunnel and point each kind of window at the right place.
+  async ensure({ restart = false } = {}) {
+    const want = this.wanted();
+    if (!want.normal && !want.private) {
+      this.generation++;
+      this.stopProcess();
+      await this.applyProxy(want);
+      this.set({ status: 'off', progress: 0, ip: null, location: null, error: null });
+      return;
+    }
+    await this.applyProxy(want); // kill switch first
+    if (restart || !this.proc || this.state.status === 'off' || this.state.status === 'error') {
+      this.retries = 0;
+      this.connect();
+    } else {
+      this.onChange(this.info());
     }
   }
 
-  async stop() {
-    this.generation++;
-    this.settings.data.vpnEnabled = false;
-    this.settings.save();
-    this.stopProcess();
-    await this.applyProxy(false);
-    this.set({ status: 'off', progress: 0, ip: null, location: null, error: null });
-  }
-
-  async restartIfOn() { if (this.settings.data.vpnEnabled) await this.start(); }
+  // Country / mode changed, or "New IP": reconnect if the VPN is in use.
+  async restart() { const w = this.wanted(); if (w.normal || w.private) await this.ensure({ restart: true }); else this.onChange(this.info()); }
 
   shutdown() { this.generation++; this.stopProcess(); }
 
@@ -108,22 +140,58 @@ class Vpn {
     this.onChange(this.info());
   }
 
-  // Apply to any new tab: stop WebRTC from revealing the real IP while the VPN is on.
-  protectContents(wc) {
-    try { wc.setWebRTCIPHandlingPolicy(this.settings.data.vpnEnabled ? 'disable_non_proxied_udp' : 'default'); } catch {}
+  // WebRTC can reveal IP addresses. Through the VPN: only proxied traffic. Otherwise: hide local IPs.
+  protectContents(wc, isPrivate) {
+    const proxied = isPrivate ? this.proxied.private : this.proxied.normal;
+    try { wc.setWebRTCIPHandlingPolicy(proxied ? 'disable_non_proxied_udp' : 'default_public_interface_only'); } catch {}
   }
 
   // ----- internals -----
 
-  async applyProxy(on) {
-    for (const p of this.partitions) {
-      const s = session.fromPartition(p);
-      if (on) await s.setProxy({ proxyRules: `socks5://127.0.0.1:${this.port}`, proxyBypassRules: '<-loopback>' });
-      else await s.setProxy({ mode: 'direct' });
+  async connect() {
+    const gen = ++this.generation;
+    this.stopProcess();
+    this.set({ status: 'connecting', progress: 0, ip: null, location: null, error: null });
+    try {
+      if (this.mode === 'tor') await this.startTor(gen);
+      else await this.startWireGuard(gen);
+      if (gen !== this.generation) return;
+      this.set({ progress: 100 });
+      await this.verify(gen);
+      this.retries = 0;
+    } catch (e) {
+      if (gen !== this.generation) return;
+      this.log('VPN failed:', e && e.message || e);
+      this.set({ status: 'error', error: String(e && e.message || e) });
+      this.scheduleRetry(gen);
+    }
+  }
+
+  // The tunnel dropped or failed: the kill switch keeps pages blocked; try again a few times.
+  scheduleRetry(gen) {
+    const want = this.wanted();
+    if ((!want.normal && !want.private) || this.retries >= 5) return;
+    this.retries++;
+    setTimeout(() => {
+      if (gen === this.generation) { this.log('VPN reconnecting, attempt', this.retries); this.connect(); }
+    }, 3000 * this.retries);
+  }
+
+  async applyProxy(want) {
+    const proxy = { proxyRules: `socks5://127.0.0.1:${this.port}`, proxyBypassRules: '<-loopback>' };
+    const direct = { mode: 'direct' };
+    const targets = [
+      [session.fromPartition(this.normalPartition), want.normal],
+      [session.defaultSession, want.normal], // CloudBrowser's own traffic (updates, ad-block lists)
+      [session.fromPartition(this.privatePartition), want.private],
+    ];
+    for (const [s, on] of targets) {
+      await s.setProxy(on ? proxy : direct);
       await s.closeAllConnections().catch(() => {});
     }
-    const { webContents } = require('electron');
-    for (const wc of webContents.getAllWebContents()) this.protectContents(wc);
+    this.proxied = { normal: want.normal, private: want.private };
+    const priv = session.fromPartition(this.privatePartition);
+    for (const wc of webContents.getAllWebContents()) this.protectContents(wc, wc.session === priv);
   }
 
   stopProcess() {
@@ -174,8 +242,11 @@ class Vpn {
       proc.stderr.on('data', onData);
       proc.on('exit', (code) => {
         if (this.proc === proc) this.proc = null;
-        if (!done) { done = true; clearTimeout(timer); reject(new Error(`Tor stopped (code ${code}).`)); }
-        else if (gen === this.generation && this.settings.data.vpnEnabled) this.set({ status: 'error', error: 'Tor stopped unexpectedly.' });
+        if (!done) { done = true; clearTimeout(timer); reject(new Error(`Tor stopped (code ${code}).`)); return; }
+        if (gen === this.generation) {
+          this.set({ status: 'error', error: 'The connection dropped. Pages are blocked until it reconnects.' });
+          this.scheduleRetry(gen);
+        }
       });
       proc.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
     });
@@ -191,20 +262,22 @@ class Vpn {
       const proc = spawn(exe, ['-c', cfg], { windowsHide: true });
       this.proc = proc;
       let out = '';
+      let started = false;
       const keep = (b) => { out = (out + String(b)).slice(-2000); };
       proc.stdout.on('data', keep);
       proc.stderr.on('data', keep);
       proc.on('error', reject);
       proc.on('exit', (code) => {
         if (this.proc === proc) this.proc = null;
-        if (gen === this.generation && this.settings.data.vpnEnabled) {
-          const why = (out.trim().split('\n').pop() || '').slice(0, 200);
-          this.set({ status: 'error', error: `WireGuard stopped (code ${code}). ${why}` });
+        const why = (out.trim().split('\n').pop() || '').slice(0, 200);
+        if (!started) { reject(new Error(`WireGuard stopped (code ${code}). ${why}`)); return; }
+        if (gen === this.generation) {
+          this.set({ status: 'error', error: 'The connection dropped. Pages are blocked until it reconnects.' });
+          this.scheduleRetry(gen);
         }
-        reject(new Error(`WireGuard stopped (code ${code}). ${(out.trim().split('\n').pop() || '').slice(0, 200)}`));
       });
       // wireproxy has no "connected" message; give it a moment, then verify() tests the tunnel.
-      setTimeout(() => { if (this.proc === proc) resolve(); }, 1500);
+      setTimeout(() => { if (this.proc === proc) { started = true; resolve(); } }, 1500);
     });
   }
 
@@ -242,7 +315,6 @@ class Vpn {
     this.set({ status: 'on', ip, location: chosen, error: null });
     this.log('VPN on:', this.mode, ip, chosen || '');
     if (chosen) return; // Tor enforces the chosen exit country itself
-    // Where are we? (best effort; some lookup services refuse Tor)
     for (const url of ['https://ipwho.is/', 'https://ipapi.co/json/']) {
       try {
         const j = await get(url);

@@ -27,6 +27,11 @@ function fill(s) {
   $('adblock').checked = s.adblock;
   $('askDownloadLocation').checked = s.askDownloadLocation;
   $('clearOnExit').checked = !!s.clearOnExit;
+  $('sleepAfter').value = String(s.sleepAfter);
+  $('stripTracking').checked = !!s.stripTracking;
+  $('sendGpc').checked = !!s.sendGpc;
+  $('incognitoScreenProtection').checked = !!s.incognitoScreenProtection;
+  $('incognitoVpn').checked = !!s.incognitoVpn;
   renderAllowlist(s.adblockAllowlist || []);
 }
 
@@ -122,7 +127,9 @@ $('vpnImport').onclick = async () => renderVpn(await cloud.call('vpn-import'));
 cloud.on('vpn', renderVpn);
 cloud.call('vpn').then(renderVpn);
 
-for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation', 'clearOnExit']) {
+$('sleepAfter').onchange = e => set('sleepAfter', Number(e.target.value));
+$('incognitoVpn').onchange = async e => renderVpn(await cloud.call('vpn-incognito', e.target.checked));
+for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 'askDownloadLocation', 'clearOnExit', 'stripTracking', 'sendGpc', 'incognitoScreenProtection']) {
   $(id).onchange = e => set(id, e.target.checked);
 }
 $('theme').onchange = e => set('theme', e.target.value);

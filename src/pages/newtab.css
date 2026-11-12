@@ -30,13 +30,15 @@ body {
 }
 svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---------- sky (see sky.js): one soft gradient with drifting clouds ---------- */
-body { background: linear-gradient(180deg, var(--sky-top), var(--sky-bottom) 75%); background-attachment: fixed; }
-:root { --sky-top: #d6e7fb; --sky-bottom: #f7faff; }
-@media (prefers-color-scheme: dark) { :root { --sky-top: #0f1727; --sky-bottom: #1a2232; } }
-body.incognito { --sky-top: #110d1a; --sky-bottom: #211a31; }
-.sky { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
-#clouds canvas { position: absolute; left: 0; will-change: transform; }
+/* ---------- plain background in CloudBrowser blue ---------- */
+body { background: var(--page); }
+:root { --page: #eaf2ff; --card: #ffffff; --card-hover: #f4f8ff; --field: #ffffff; --accent: #2563eb; --text: #17233b; --muted: #5f6f8c;
+  --shadow: 0 4px 18px rgba(30,70,150,.10), 0 1px 3px rgba(30,70,150,.08); }
+@media (prefers-color-scheme: dark) {
+  :root { --page: #0f1d3d; --card: #172a54; --card-hover: #1f3566; --field: #172a54; --accent: #6b9bff; --text: #e8eefc; --muted: #9fb1d6;
+    --shadow: 0 4px 18px rgba(0,0,0,.35); }
+}
+body.incognito { --page: #15101f; --card: #231a35; --card-hover: #2e2345; --field: #231a35; --accent: #a58bf5; --text: #ece6fb; --muted: #a497c4; }
 
 main {
   position: relative; z-index: 1; flex: 1; width: 100%; max-width: 720px; margin: 0 auto;
@@ -65,7 +67,7 @@ main {
 .site {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px;
   padding: 18px 8px 14px; border-radius: 16px; background: var(--card); color: var(--text);
-  text-decoration: none; backdrop-filter: blur(6px); transition: background .15s, transform .15s;
+  text-decoration: none; transition: background .15s, transform .15s;
 }
 .site:hover { background: var(--card-hover); transform: translateY(-2px); }
 .site .ico {
@@ -110,7 +112,7 @@ footer a { color: var(--muted); }
 #customize {
   position: fixed; right: 18px; bottom: 16px; z-index: 2; display: flex; align-items: center; gap: 8px;
   height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: var(--card); color: var(--text);
-  box-shadow: var(--shadow); cursor: pointer; font: inherit; backdrop-filter: blur(6px);
+  box-shadow: var(--shadow); cursor: pointer; font: inherit;
 }
 #customize:hover { background: var(--card-hover); }
 #customize svg { width: 16px; height: 16px; }

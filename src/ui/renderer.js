@@ -253,6 +253,7 @@ async function updateSuggestions() {
   sel = 0;
   openOverlay();
   renderSuggestions();
+  cloud.preconnect(rows[0].url || rows[0].text);
 }
 
 function go(row, newTab) {
@@ -315,6 +316,8 @@ $('vp-toggle').onchange = () => cloud.vpnToggle();
 $('vp-country').onchange = e => cloud.vpnCountry(e.target.value);
 $('vp-import').onclick = () => cloud.vpnImport();
 $('vp-check').onclick = () => { closeVpnPanel(); cloud.vpnCheckIp(); };
+$('vp-newip').onclick = () => cloud.vpnNewIp();
+$('vp-incog').onchange = e => cloud.vpnIncognito(e.target.checked);
 for (const b of document.querySelectorAll('.vp-seg button')) b.onclick = () => cloud.vpnMode(b.dataset.mode);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeVpnPanel(); });
 cloud.onVpn(i => { vpnInfo = i; renderVpn(); });
@@ -323,10 +326,10 @@ function vpnStatusText(i) {
   if (!i) return '';
   const where = i.location ? ` · ${i.location}` : '';
   switch (i.status) {
-    case 'on': return `Protected${where} · ${i.ip}`;
+    case 'on': return `${i.scope === 'incognito' ? 'Incognito protected' : 'Protected'}${where} · ${i.ip}`;
     case 'connecting': return i.mode === 'tor' ? `Connecting to Tor… ${i.progress || 0}%` : 'Connecting…';
     case 'error': return i.error || 'Something went wrong';
-    default: return 'Off · websites can see your real IP address';
+    default: return i.incognitoVpn ? 'Off · incognito windows will use it automatically' : 'Off · websites can see your real IP address';
   }
 }
 
@@ -334,11 +337,14 @@ function renderVpn() {
   const i = vpnInfo;
   if (!i) return;
   const btn = $('vpn-btn');
-  btn.className = 'vpn-pill' + (i.enabled ? ' ' + i.status : '');
-  $('vpn-label').textContent = i.enabled && i.status === 'connecting' ? `${i.progress || 0}%` : 'VPN';
+  const active = i.enabled || (i.scope === 'incognito' && document.body.classList.contains('incognito'));
+  btn.className = 'vpn-pill' + (active ? ' ' + i.status : '');
+  $('vpn-label').textContent = active && i.status === 'connecting' ? `${i.progress || 0}%` : 'VPN';
   btn.title = 'CloudBrowser VPN: ' + vpnStatusText(i);
   if ($('vpn-panel').hidden) return;
   $('vp-toggle').checked = i.enabled;
+  $('vp-incog').checked = i.incognitoVpn;
+  $('vp-newip').disabled = i.status !== 'on';
   const st = $('vp-status');
   st.textContent = vpnStatusText(i);
   st.className = 'vp-status ' + (i.enabled ? i.status : '');
@@ -420,86 +426,113 @@ function siteKind(url) {
   return 'search';
 }
 
-function renderTabs() {
-  const vertical = !!state.verticalTabs;
-  const strip = vertical ? $('vtabs') : $('tabs');
-  (vertical ? $('tabs') : $('vtabs')).replaceChildren();
-  const narrow = !vertical && state.tabs.length > 0 && (strip.parentElement.clientWidth - 200) / state.tabs.length < 90;
-  strip.replaceChildren(...state.tabs.map(t => {
-    const el = document.createElement('div');
-    el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow && !t.pinned ? ' narrow' : '') + (t.pinned ? ' pinned' : '');
-    el.title = t.title + (t.pinned ? ' (pinned)' : '');
-    el.draggable = true;
-    el.dataset.index = String(state.tabs.indexOf(t));
-    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-tab', String(t.id)); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); });
-    el.addEventListener('dragend', () => el.classList.remove('dragging'));
-    el.addEventListener('dragover', e => {
-      if (!e.dataTransfer.types.includes('text/x-tab')) return;
-      e.preventDefault();
-      const r = el.getBoundingClientRect();
-      const after = vertical ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
-      el.classList.toggle('drop-after', after);
-      el.classList.toggle('drop-before', !after);
-    });
-    el.addEventListener('dragleave', () => el.classList.remove('drop-after', 'drop-before'));
-    el.addEventListener('drop', e => {
-      e.preventDefault();
-      const id = Number(e.dataTransfer.getData('text/x-tab'));
-      const after = el.classList.contains('drop-after');
-      el.classList.remove('drop-after', 'drop-before');
-      const from = state.tabs.findIndex(x => x.id === id);
-      let to = state.tabs.indexOf(t) + (after ? 1 : 0);
-      if (from < to) to--;
-      if (id && from !== to) cloud.moveTab(id, to);
-    });
-    el.onmousedown = e => {
-      if (e.button === 0) cloud.switchTab(t.id);
-      if (e.button === 1) e.preventDefault();
-    };
-    el.onauxclick = e => { if (e.button === 1) cloud.closeTab(t.id); };
-    el.oncontextmenu = e => { e.preventDefault(); cloud.tabMenu(t.id); };
-    el.ondblclick = e => e.stopPropagation();
+// Tabs are kept and updated in place (not rebuilt on every change), so the strip stays smooth
+// even while a page is loading or the ad blocker is busy.
+const tabEls = new Map(); // id -> { el, key }
+let tabsLayoutKey = '';
 
-    let icon;
-    if (t.loading) {
-      icon = document.createElement('div');
-      icon.className = 'spinner';
-    } else if (t.favicon) {
-      icon = document.createElement('img');
-      icon.className = 'favicon';
-      icon.src = t.favicon;
-      icon.onerror = () => { const d = document.createElement('div'); d.className = 'favicon placeholder'; icon.replaceWith(d); };
-    } else {
-      icon = document.createElement('div');
-      icon.className = 'favicon placeholder';
-    }
-    el.append(icon);
+function tabKey(t, vertical, narrow) {
+  return [t.title, t.favicon, t.loading, t.private, t.audible, t.muted, t.pinned, t.sleeping, t.id === state.activeId, vertical, narrow].join('|');
+}
 
-    const title = document.createElement('span');
-    title.className = 'title';
-    title.textContent = t.title;
-    el.append(title);
-    if (t.pinned) { const p = document.createElement('span'); p.className = 'pin'; p.innerHTML = ICONS.pin; el.append(p); }
+function buildTab(t, vertical, narrow) {
+  const el = document.createElement('div');
+  el.dataset.id = String(t.id);
+  el.draggable = true;
+  el.onmousedown = e => {
+    if (e.button === 0) cloud.switchTab(t.id);
+    if (e.button === 1) e.preventDefault();
+  };
+  el.onauxclick = e => { if (e.button === 1) cloud.closeTab(t.id); };
+  el.oncontextmenu = e => { e.preventDefault(); cloud.tabMenu(t.id); };
+  el.ondblclick = e => e.stopPropagation();
+  el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-tab', String(t.id)); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); });
+  el.addEventListener('dragend', () => el.classList.remove('dragging'));
+  el.addEventListener('dragover', e => {
+    if (!e.dataTransfer.types.includes('text/x-tab')) return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const after = state.verticalTabs ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+    el.classList.toggle('drop-after', after);
+    el.classList.toggle('drop-before', !after);
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-after', 'drop-before'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    const id = Number(e.dataTransfer.getData('text/x-tab'));
+    const after = el.classList.contains('drop-after');
+    el.classList.remove('drop-after', 'drop-before');
+    const from = state.tabs.findIndex(x => x.id === id);
+    let to = state.tabs.findIndex(x => x.id === Number(el.dataset.id)) + (after ? 1 : 0);
+    if (from < to) to--;
+    if (id && from !== to) cloud.moveTab(id, to);
+  });
+  fillTab(el, t, vertical, narrow);
+  return el;
+}
 
-    if (t.audible || t.muted) {
-      const a = document.createElement('button');
-      a.className = 'audio';
-      a.title = t.muted ? 'Unmute tab' : 'Mute tab';
-      a.innerHTML = t.muted ? ICONS.muted : ICONS.sound;
-      a.onmousedown = e => e.stopPropagation();
-      a.onclick = () => cloud.toggleMute(t.id);
-      el.append(a);
-    }
+function fillTab(el, t, vertical, narrow) {
+  el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow && !t.pinned ? ' narrow' : '')
+    + (t.pinned ? ' pinned' : '') + (t.sleeping ? ' sleeping' : '');
+  el.title = t.title + (t.pinned ? ' (pinned)' : '') + (t.sleeping ? ' (sleeping: click to wake)' : '');
 
+  let icon;
+  if (t.loading) {
+    icon = document.createElement('div');
+    icon.className = 'spinner';
+  } else if (t.favicon) {
+    icon = document.createElement('img');
+    icon.className = 'favicon';
+    icon.src = t.favicon;
+    icon.onerror = () => { const d = document.createElement('div'); d.className = 'favicon placeholder'; icon.replaceWith(d); };
+  } else {
+    icon = document.createElement('div');
+    icon.className = 'favicon placeholder';
+  }
+  const title = document.createElement('span');
+  title.className = 'title';
+  title.textContent = t.title;
+  const parts = [icon, title];
+  if (t.pinned) { const p = document.createElement('span'); p.className = 'pin'; p.innerHTML = ICONS.pin; parts.push(p); }
+  if (t.audible || t.muted) {
+    const a = document.createElement('button');
+    a.className = 'audio';
+    a.title = t.muted ? 'Unmute tab' : 'Mute tab';
+    a.innerHTML = t.muted ? ICONS.muted : ICONS.sound;
+    a.onmousedown = e => e.stopPropagation();
+    a.onclick = () => cloud.toggleMute(t.id);
+    parts.push(a);
+  }
+  if (!t.pinned || vertical) {
     const close = document.createElement('button');
     close.className = 'close';
     close.title = 'Close tab (Ctrl+W)';
     close.innerHTML = ICONS.close;
     close.onmousedown = e => e.stopPropagation();
     close.onclick = () => cloud.closeTab(t.id);
-    if (!t.pinned || vertical) el.append(close);
-    return el;
-  }));
+    parts.push(close);
+  }
+  el.replaceChildren(...parts);
+}
+
+function renderTabs() {
+  const vertical = !!state.verticalTabs;
+  const strip = vertical ? $('vtabs') : $('tabs');
+  const other = vertical ? $('tabs') : $('vtabs');
+  const narrow = !vertical && state.tabs.length > 0 && (strip.parentElement.clientWidth - 200) / state.tabs.length < 90;
+  const layoutKey = `${vertical}`;
+  if (layoutKey !== tabsLayoutKey) { tabsLayoutKey = layoutKey; tabEls.clear(); other.replaceChildren(); strip.replaceChildren(); }
+
+  const seen = new Set();
+  state.tabs.forEach((t, i) => {
+    seen.add(t.id);
+    const key = tabKey(t, vertical, narrow);
+    let entry = tabEls.get(t.id);
+    if (!entry) { entry = { el: buildTab(t, vertical, narrow), key }; tabEls.set(t.id, entry); }
+    else if (entry.key !== key) { fillTab(entry.el, t, vertical, narrow); entry.key = key; }
+    if (strip.children[i] !== entry.el) strip.insertBefore(entry.el, strip.children[i] || null);
+  });
+  for (const [id, entry] of tabEls) if (!seen.has(id)) { entry.el.remove(); tabEls.delete(id); }
   if (vertical) { const a = strip.querySelector('.tab.active'); if (a) a.scrollIntoView({ block: 'nearest' }); }
 }
 
