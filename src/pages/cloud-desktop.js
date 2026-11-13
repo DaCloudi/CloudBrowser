@@ -196,7 +196,10 @@ $('testMic').onclick = async () => {
       $('testHint').textContent = heard > 10 ? 'Working: this PC can hear your headset mic.' : 'Didn’t hear anything. Check the headset is connected and the mic switch is on, then reconnect.';
       stopMicTest();
     }, 12000);
-  } catch (e) { $('testHint').textContent = 'Couldn’t open the microphone: ' + clean(e); stopMicTest(); }
+  } catch (e) {
+    $('testHint').textContent = e && e.name === 'NotFoundError' ? 'This PC has no microphones yet. Install VB-Cable and restart your PC first.' : 'Couldn’t open the microphone: ' + clean(e);
+    stopMicTest();
+  }
 };
 
 loadAudio();
