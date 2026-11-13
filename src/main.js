@@ -2951,6 +2951,21 @@ async function smokeTest() {
     closeTab(other.id);
   });
 
+  await step('address bar follows YouTube clicks', async () => {
+    const wc = t.view.webContents;
+    // Click into the address bar, then back into the page (this used to leave the bar stuck).
+    w.ui.webContents.focus();
+    await ui(w, `document.getElementById('address').focus()`);
+    await wait(400);
+    wc.focus();
+    await wait(400);
+    // YouTube opens videos without a full page load (history.pushState).
+    await jsIn(wc, `history.pushState({}, '', '/watch?v=NEXTvideo01'); 1`);
+    await wait(800);
+    const shown = await ui(w, `document.getElementById('address').value`);
+    S('address bar after in-page navigation:', shown, '| correct?', /v=NEXTvideo01/.test(shown), '| in history?', history.data.items[0] && history.data.items[0].url.includes('NEXTvideo01'));
+  });
+
   await step('shorts', async () => {
     const wc = t.view.webContents;
     load(wc, 'https://www.youtube.com/shorts/abcdefghijk');
