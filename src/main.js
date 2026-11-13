@@ -135,7 +135,8 @@ const PROMPT_PERMISSIONS = {
   'top-level-storage-access': 'use cookies it saved on other sites',
   openExternal: 'open an app on your computer',
 };
-const AUTO_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'keyboardLock']);
+// display-capture: screen sharing always goes through CloudBrowser's own "Choose what to share" window.
+const AUTO_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'keyboardLock', 'display-capture']);
 // Refused without asking (Chrome mostly does the same; asking would just be noise).
 const SILENT_DENY = new Set(['storage-access', 'top-level-storage-access', 'idle-detection']);
 
@@ -1004,7 +1005,7 @@ function setupPermissions(sess, isPrivate) {
   sess.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     try {
       if (AUTO_ALLOW.has(permission)) return callback(true);
-      if (!PROMPT_PERMISSIONS[permission] || SILENT_DENY.has(permission)) return callback(false);
+      if (!PROMPT_PERMISSIONS[permission] || SILENT_DENY.has(permission)) { if (SMOKE) log('permission refused:', permission); return callback(false); }
       const origin = originOf(details.requestingUrl || wc.getURL());
       // Like Chrome, don't let ads and other embedded frames from another site ask.
       if (details.isMainFrame === false && origin !== originOf(wc.getURL())) return callback(false);
