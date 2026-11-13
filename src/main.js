@@ -1947,34 +1947,59 @@ function setDiscordBadge() {
   if (discordPop) { try { discordPop.win.setOverlayIcon(on ? overlayIcon : null, text); } catch {} }
 }
 
-// Screen sharing (Discord, Meet, …): pick a screen or window.
+// Screen sharing (Discord, Meet, …): a "Choose what to share" window with thumbnails.
+let sharePending = null;
 function setupScreenShare(sess) {
   sess.setDisplayMediaRequestHandler(async (request, callback) => {
+    if (sharePending) { try { sharePending.finish(null); } catch {} }
     let done = false;
-    const finish = (streams) => { if (done) return; done = true; try { callback(streams); } catch (e) { log('screen share', e.message); } };
+    const finish = (choice) => {
+      if (done) return; done = true;
+      const p = sharePending; sharePending = null;
+      if (p && p.win && !p.win.isDestroyed()) p.win.close();
+      const src = choice && p && p.sources.find(x => x.id === choice.id);
+      try {
+        if (!src) callback({});
+        else callback({ video: src, ...(choice.audio && src.id.startsWith('screen:') ? { audio: 'loopback' } : {}) });
+      } catch (e) { log('screen share', e.message); }
+    };
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 128, height: 72 } });
-      const owner = BaseWindow.getFocusedWindow() || (currentWindow() && currentWindow().win);
-      const screens = sources.filter(x => x.id.startsWith('screen:'));
-      const wins = sources.filter(x => x.id.startsWith('window:') && x.name && !/^CloudBrowser|— CloudBrowser/.test(x.name));
-      const item = (src, label) => ({
-        label, icon: src.thumbnail && !src.thumbnail.isEmpty() ? src.thumbnail.resize({ width: 64 }) : undefined,
-        click: () => finish({ video: src, ...(request.audioRequested && src.id.startsWith('screen:') ? { audio: 'loopback' } : {}) }),
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+      const owner = BaseWindow.getFocusedWindow() || (discordPop && discordPop.win) || (currentWindow() && currentWindow().win);
+      const ob = owner ? owner.getBounds() : { x: 100, y: 100, width: 900, height: 700 };
+      const win = new BaseWindow({
+        width: 720, height: 520, x: Math.round(ob.x + (ob.width - 720) / 2), y: Math.round(ob.y + (ob.height - 520) / 2),
+        parent: owner || undefined, modal: false, minimizable: false, maximizable: false, resizable: true,
+        title: 'Choose what to share', icon: path.join(__dirname, 'ui', 'icon.png'), backgroundColor: '#07101b', autoHideMenuBar: true,
       });
-      Menu.buildFromTemplate([
-        { label: 'Choose what to share', enabled: false },
-        { type: 'separator' },
-        ...screens.map((x, i) => item(x, screens.length > 1 ? `Entire screen ${i + 1}` : 'Entire screen (with sound)')),
-        ...(wins.length ? [{ type: 'separator' }, ...wins.slice(0, 20).map(x => item(x, x.name.length > 60 ? x.name.slice(0, 57) + '…' : x.name))] : []),
-        { type: 'separator' },
-        { label: 'Cancel', click: () => finish({}) },
-      ]).popup({ window: owner || undefined, callback: () => setTimeout(() => finish({}), 300) });
+      const view = new WebContentsView({ webPreferences: { partition: NORMAL_PARTITION, preload: path.join(__dirname, 'preload-page.js'), contextIsolation: true, sandbox: true } });
+      view.setBackgroundColor('#07101b');
+      win.contentView.addChildView(view);
+      const fit = () => { const c = win.getContentBounds(); view.setBounds({ x: 0, y: 0, width: c.width, height: c.height }); };
+      fit(); win.on('resize', fit);
+      win.on('closed', () => { try { view.webContents.close(); } catch {} finish(null); });
+      let site = '';
+      try { site = hostOf(request.securityOrigin || (request.frame && request.frame.url) || ''); } catch {}
+      sharePending = { sources, finish, win, site, audio: !!request.audioRequested };
+      view.webContents.loadURL('cloud://share-picker/');
+      view.webContents.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') { e.preventDefault(); finish(null); } });
     } catch (e) {
       log('screen share picker failed', e.message);
-      finish({});
+      finish(null);
     }
   });
 }
+pageHandle('share-sources', () => {
+  const p = sharePending;
+  if (!p) return null;
+  return {
+    site: p.site, audio: p.audio,
+    sources: p.sources.map(x => ({ id: x.id, name: x.name, kind: x.id.startsWith('screen:') ? 'screen' : 'window', thumb: x.thumbnail && !x.thumbnail.isEmpty() ? x.thumbnail.toDataURL() : '' }))
+      .filter(x => x.kind === 'screen' || (x.name && !/— CloudBrowser|^Choose what to share$/.test(x.name))),
+  };
+});
+pageHandle('share-choose', (_ctx, id, audio) => { if (sharePending) sharePending.finish(id ? { id: String(id), audio: !!audio } : null); return true; });
+
 
 function destroyPanel(w, id) {
   const v = w.panelViews.get(id);
@@ -3417,9 +3442,12 @@ async function smokeTest() {
     load(wc, 'https://example.com/');
     await waitFor(() => !wc.isLoading(), 10000);
     const p = wc.executeJavaScript(`navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(s => 'got ' + s.getTracks().map(t => t.kind + ':' + t.label).join(', ')).catch(e => 'error ' + e.name + ' ' + e.message)`, true);
-    await wait(2500);
+    await waitFor(() => !!sharePending, 8000);
+    await wait(2000);
+    S('screen share: picker open', !!sharePending, '| sources', sharePending && sharePending.sources.length);
     await screen('screen-share-picker');
-    await powershell(`$w = New-Object -ComObject WScript.Shell; $w.SendKeys('{DOWN}'); Start-Sleep -m 300; $w.SendKeys('{ENTER}'); 'ok'`);
+    const pv = sharePending && sharePending.win.contentView.children[0];
+    if (pv) await pv.webContents.executeJavaScript(`document.getElementById('share').click(); 1`).catch(e => S('click failed', e.message));
     S('screen share:', await Promise.race([p, wait(10000).then(() => 'TIMEOUT')]));
     await wc.executeJavaScript(`1`).catch(() => {});
   });
