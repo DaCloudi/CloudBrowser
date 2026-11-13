@@ -64,13 +64,57 @@ changes.append("Quest app icon: white cloud on navy")
 edit("alvr/graphics/src/lobby.rs", [
     ("r: 0.0,\n                    g: 0.0,\n                    b: 0.02,", "r: 0.0024,\n                    g: 0.0052,\n                    b: 0.0103,"),  # #07101b in linear light
 ])
+CD_VERSION = (pathlib.Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip()
+# The status screen in the headset: our name and version, and messages that point to CloudBrowser.
+# (Rust source text below: \\n is a newline inside a Rust string.)
 edit("alvr/client_core/src/connection.rs", [
-    ('"ALVR v{}\\nhostname: {}\\nIP: {}\\n\\n{message}"', '"Cloud Desktop (ALVR v{})\\nhostname: {}\\nIP: {}\\n\\n{message}"'),
+    (r'"ALVR v{}\nhostname: {}\nIP: {}\n\n{message}"',
+     r'"Cloud Desktop ' + CD_VERSION + r'{}\nheadset: {}\nIP: {}\n\n{message}"'),
+    ("        *ALVR_VERSION,\n        Config::load().hostname,", '        "",\n        Config::load().hostname,'),
+    ("ViewParams, ALVR_VERSION,", "ViewParams,"),  # no longer used here
+    (r'''    "Searching for streamer...\n",
+    "Open ALVR on your PC then click \"Trust\"\n",
+    "next to the device entry",''',
+     r'''    "Looking for your PC...\n\n",
+    "On your PC open CloudBrowser:\n",
+    "Cloud Desktop > Connect\n\n",
+    "USB cable: just plug it in\n",
+    "Wi-Fi: click Trust on your PC",'''),
+    (r'"Cannot connect to the streamer.\nNetwork error."', r'"Can' + "'" + r't reach your PC.\nCheck the cable or Wi-Fi."'),
+    (r'"Successful connection!\nPlease wait..."', r'"Connected!\nOne moment..."'),
+    (r'"The stream will begin soon\nPlease wait..."', r'"Your PC is coming up\nOne moment..."'),
+    (r'"The streamer is restarting\nPlease wait..."', r'"Cloud Desktop is restarting\nOne moment..."'),
+    ('"The streamer has disconnected."', r'"Your PC disconnected.\nClick Connect in CloudBrowser\nto carry on."'),
+    ('"Connection timeout."', r'"Lost the connection.\nTrying again..."'),
+])
+edit("alvr/client_openxr/src/lib.rs", [
+    ('application_name: "ALVR Client"', f'application_name: "{NAME}"'),
+])
+
+# The lobby you see before the picture starts: CloudBrowser navy, a blue grid, and a glowing
+# circle where you stand.
+edit("alvr/graphics/resources/lobby_quad.wgsl", [
+    ("let ground_center = vec3f(0.0, 0.0, 0.0);", "let ground_center = vec3f(0.0024, 0.0052, 0.0103);"),
+    ("let ground_horizon = vec3f(0.0, 0.0, 0.015);", "let ground_horizon = vec3f(0.006, 0.014, 0.04);"),
+    ("let grid_close = vec3f(0.114, 0.545, 0.804);", "let grid_close = vec3f(0.074, 0.266, 1.0);"),
+    ("let grid_far = vec3f(0.259, 0.863, 0.886);", "let grid_far = vec3f(0.42, 0.62, 1.0);"),
+    ("        // Fade to the horizon colour over distance\n",
+     "        // Cloud Desktop: a soft glowing circle where you stand\n"
+     "        let ring = clamp(1.0 - abs(distance - 1.25) / (2.0 * fwidth(distance) + 0.01), 0.0, 1.0);\n"
+     "        out_color += ring * vec3f(0.3, 0.55, 1.0) * 2.0;\n\n"
+     "        // Fade to the horizon colour over distance\n"),
+])
+
+# SteamVR's device list: our name, not ALVR's.
+edit("alvr/server_openvr/src/props.rs", [
+    ('"ALVR Remote Controller', '"Cloud Desktop Controller'),
+    ('"ALVR Tracker (', '"Cloud Desktop Tracker ('),
+    ('"ALVR driver server"', f'"{NAME}"'),
 ])
 
 # ---- On the PC: dashboard name and CloudBrowser's navy theme ----
 edit("alvr/dashboard/src/main.rs", [
-    ('"ALVR Dashboard (streamer v{})"', '"Cloud Desktop (streamer v{}, based on ALVR)"'),
+    ('"ALVR Dashboard (streamer v{})"', '"Cloud Desktop advanced settings (streamer v{})"'),
 ])
 edit("alvr/dashboard/src/dashboard/mod.rs", [
     ('ui.heading(RichText::new("ALVR")', 'ui.heading(RichText::new("Cloud Desktop")'),

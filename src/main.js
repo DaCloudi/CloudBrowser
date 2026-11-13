@@ -36,7 +36,7 @@ const SMOKE = process.env.CLOUD_SMOKE === '1';
 const NORMAL_PARTITION = 'persist:cloudbrowser';
 const PRIVATE_PARTITION = 'cloudbrowser-private'; // no "persist:" = memory only
 const PAGES_DIR = path.join(__dirname, 'pages');
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'reader'];
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'reader', 'privacy', 'cloud-desktop'];
 const TITLEBAR_HEIGHT = 40;
 
 // Shown on the extensions page for one-click install.
@@ -3418,6 +3418,14 @@ pageHandle('cd-status', () => cd().status());
 pageHandle('cd-install-pc', (ctx) => cd().installPc(cdProgress(ctx)));
 pageHandle('cd-install-quest', (ctx) => cd().installQuest(cdProgress(ctx)));
 pageHandle('cd-start', () => cd().start());
+pageHandle('cd-connect', (ctx) => cd().connect(cdProgress(ctx)));
+pageHandle('cd-disconnect', () => cd().disconnect());
+pageHandle('cd-live', () => cd().liveStatus());
+pageHandle('cd-trust', (_ctx, hostname) => cd().trust(hostname));
+pageHandle('cd-forget', (_ctx, hostname) => cd().forget(hostname));
+pageHandle('cd-advanced', () => cd().advanced());
+pageHandle('cd-check-cable', (ctx) => cd().checkCable(cdProgress(ctx)));
+pageHandle('cd-open', (ctx) => { if (ctx.tab) openInternal(ctx.tab.w, 'cloud-desktop'); return true; });
 pageHandle('cd-desktop-mode', () => cd().desktopMode());
 pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
@@ -3558,7 +3566,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     if (SMOKE) setTimeout(smokeTest, 1500);
   });
 
-  app.on('will-quit', () => { if (discordLite) discordLite.stop(); });
+  app.on('will-quit', () => { if (discordLite) discordLite.stop(); if (cloudDesktop) cloudDesktop.stopWatching(); });
   app.on('before-quit', (e) => {
     if (!quitting) { quitting = true; saveSession(true); }
     if (settings && settings.data.clearOnExit && !clearedOnExit) {
@@ -4072,15 +4080,97 @@ async function smokeTest() {
     closeTab(rt.id);
   });
 
-  await step('cloud desktop settings', async () => {
+  await step('cloud desktop', async () => {
+    const { CloudDesktop } = require('./cloud-desktop');
     S('cloud desktop: status', JSON.stringify(await cd().status().catch(e => ({ error: e.message }))));
+
+    // SteamVR driver registration, on a pretend PC: our copy goes in, other ALVR copies come out, other drivers stay.
+    const tmp = path.join(app.getPath('temp'), 'cd-smoke');
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(path.join(tmp, 'CloudDesktop', 'pc'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'driver.vrdrivermanifest'), '{}');
+    fs.mkdirSync(path.join(tmp, 'openvr'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'openvr', 'openvrpaths.vrpath'), JSON.stringify({ config: ['C:\\Steam\\config'], external_drivers: ['C:\\Program Files\\ALVR\\alvr_streamer_windows', 'D:\\VD\\driver', 'C:\\x\\ALVR-old'], version: 1 }));
+    const realLocal = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = tmp;
+    try {
+      const fake = new CloudDesktop({ session: () => session.fromPartition(NORMAL_PARTITION), log });
+      const r = fake.registerDriver();
+      S('cloud desktop: register', JSON.stringify(r), JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp, 'openvr', 'openvrpaths.vrpath'), 'utf8'))));
+    } catch (e) { S('cloud desktop: register FAILED', e.message); }
+    process.env.LOCALAPPDATA = realLocal;
+
+    // A pretend streamer on 127.0.0.1:8082, speaking the same API (needs X-ALVR), with a websocket of events.
+    const crypto = require('crypto');
+    const got = [];
+    const sessionCfg = { client_connections: {
+      'client.wired': { display_name: 'USB cable', current_ip: null, manual_ips: [], trusted: true, connection_state: 'Streaming' },
+      '6421.client.local': { display_name: 'Quest 3', current_ip: '192.168.1.40', manual_ips: [], trusted: false, connection_state: 'Disconnected' } },
+      session_settings: { connection: { web_server_port: 8082 } } };
+    const sockets = [];
+    const frame = (text) => { const p = Buffer.from(text); const hd = p.length < 126 ? Buffer.from([0x81, p.length]) : (() => { const x = Buffer.alloc(4); x[0] = 0x81; x[1] = 126; x.writeUInt16BE(p.length, 2); return x; })(); return Buffer.concat([hd, p]); };
+    const ev = (id, data) => frame(JSON.stringify({ timestamp: '12:00:00', event_type: { id, data } }));
+    const srv = require('http').createServer((req, res) => {
+      if (req.headers['x-alvr'] !== 'true') { res.writeHead(400); return res.end('missing X-ALVR header'); }
+      let body = ''; req.on('data', c => body += c);
+      req.on('end', () => {
+        if (req.url === '/api/version') { res.end('20.14.1'); return; }
+        if (req.url === '/api/dashboard-request') {
+          got.push(body);
+          const q = JSON.parse(body);
+          if (q === 'GetSession') for (const so of sockets) so.write(ev('Session', sessionCfg));
+          if (q.UpdateClientList && q.UpdateClientList.action === 'Trust') { sessionCfg.client_connections[q.UpdateClientList.hostname].trusted = true; for (const so of sockets) so.write(ev('Session', sessionCfg)); }
+          res.end(); return;
+        }
+        res.writeHead(404); res.end();
+      });
+    });
+    srv.on('upgrade', (req, socket) => {
+      if (req.headers['x-alvr'] !== 'true') { socket.destroy(); return; }
+      const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      sockets.push(socket);
+      socket.on('error', () => {});
+      socket.write(ev('Log', { severity: 'Info', content: 'x'.repeat(400) }));
+    });
+    await new Promise(r => srv.listen(8082, '127.0.0.1', r));
+    const statsTimer = setInterval(() => { for (const so of sockets) so.write(ev('StatisticsSummary', { total_latency_ms: 38.4, network_latency_ms: 4.1, client_fps: 90, video_mbits_per_sec: 412.6, packets_lost_per_sec: 0, battery_hmd: 76, hmd_plugged: true })); }, 500);
+    try {
+      openInternal(w, 'cloud-desktop');
+      await wait(5000);
+      const pg = activeTab(w);
+      const live = await cd().liveStatus();
+      S('cloud desktop: live', JSON.stringify({ state: live.state, via: live.via, server: live.server, stats: live.stats, headsets: live.headsets.map(x => [x.name, x.state, x.trusted]) }));
+      S('cloud desktop: page', tabUrl(pg), '|', JSON.stringify((await pg.view.webContents.executeJavaScript('document.querySelector("main").innerText').catch(e => e.message)).slice(0, 700)));
+      await screen('cloud-desktop-streaming');
+      // Trust the new Wi-Fi headset from the page.
+      const trusted = await pg.view.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('.hs button')].find(x => x.textContent === 'Trust'); if (b) b.click(); return !!b; })()`).catch(e => e.message);
+      await wait(2500);
+      S('cloud desktop: trust clicked', trusted, '| requests', JSON.stringify(got.filter(x => x !== '"GetSession"')), '| now', JSON.stringify((await cd().liveStatus()).headsets.map(x => [x.name, x.trusted])));
+
+      // Cable checker with no headset plugged in (downloads adb the first time).
+      const cable = await pg.view.webContents.executeJavaScript(`(async () => { document.getElementById('checkCable').click(); for (let i = 0; i < 240 && document.getElementById('cableResult').hidden; i++) await new Promise(r => setTimeout(r, 500)); return document.getElementById('cable').innerText; })()`).catch(e => e.message);
+      S('cloud desktop: cable checker', JSON.stringify(String(cable).slice(0, 500)), '| progress', JSON.stringify(await pg.view.webContents.executeJavaScript(`document.getElementById('progress').textContent`).catch(() => '')));
+      await pg.view.webContents.executeJavaScript(`document.getElementById('cable').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
+      await wait(600);
+      await screen('cloud-desktop-cable');
+      cd().stopWatching();
+      clearInterval(statsTimer);
+      for (const so of sockets) so.destroy();
+      await new Promise(r => srv.close(r));
+      await wait(4500);
+      const off = await cd().liveStatus();
+      S('cloud desktop: after streamer stops', off.state, off.server);
+      await pg.view.webContents.executeJavaScript(`window.scrollTo(0, 0); 1`).catch(() => {});
+      await wait(1500);
+      await screen('cloud-desktop-off');
+      closeTab(pg.id);
+    } finally { clearInterval(statsTimer); try { srv.close(); } catch {} }
+
     openInternal(w, 'settings', '#vr');
-    await wait(3000);
+    await wait(2500);
     const st = activeTab(w);
-    S('cloud desktop: settings section', await st.view.webContents.executeJavaScript(`JSON.stringify({ status: document.getElementById('cdStatus').textContent, pc: document.getElementById('cdInstallPc').textContent, pcEnabled: !document.getElementById('cdInstallPc').disabled, quest: !document.getElementById('cdInstallQuest').disabled })`).catch(e => e.message));
-    await st.view.webContents.executeJavaScript(`document.getElementById('cdStatus').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
-    await wait(500);
-    await screen('cloud-desktop-settings');
+    S('cloud desktop: settings row', await st.view.webContents.executeJavaScript(`document.getElementById('cdStatus').textContent + ' | ' + document.getElementById('cdOpen').textContent`).catch(e => e.message));
     closeTab(st.id);
   });
 
