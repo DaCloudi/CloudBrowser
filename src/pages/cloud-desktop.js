@@ -56,6 +56,16 @@ function render() {
     $('tBatteryLabel').textContent = s.charging ? 'battery, charging' : 'battery';
   }
 
+  // Wi-Fi tips from what the stream is actually doing.
+  const tips = [];
+  if (s && live.via === 'wifi') {
+    if (s.network > 15) tips.push(`Wi-Fi delay is high (${s.network} ms). Move closer to the router, or use its 5 GHz or 6 GHz network.`);
+    if (s.lost > 0) tips.push('Some picture data is being lost. Fewer devices streaming on your Wi-Fi at the same time helps, and so does a router in the same room.');
+    if (s.mbps < 60) tips.push('The picture is running at a low bitrate. The biggest fix: plug your PC into the router with an ethernet cable.');
+  }
+  $('wifiTips').hidden = !tips.length;
+  $('wifiTipList').replaceChildren(...tips.map(t => h('li', {}, t)));
+
   const list = $('headsets');
   const rows = live.headsets.filter(hs => !hs.wired || live.server || hs.state !== 'Disconnected');
   const wired = live.headsets.find(hs => hs.wired);
@@ -139,6 +149,7 @@ function renderAudio() {
   if (!audio) return;
   $('mic').checked = audio.mic;
   $('lowDelay').checked = audio.lowDelay;
+  $('autoQuality').checked = audio.autoQuality;
   $('vbRow').hidden = !(audio.mic && !audio.vbcable);
   $('micHint').textContent = !audio.mic ? 'Off. Your Quest’s mic won’t reach this PC.'
     : audio.vbcable ? 'On. In Discord or your game, pick “CABLE Output” as the microphone. Changes apply the next time your headset connects.'
@@ -149,6 +160,7 @@ function renderAudio() {
 }
 async function loadAudio() { try { audio = await cloud.call('cd-audio'); renderAudio(); } catch {} }
 $('mic').onchange = async () => { audio = await cloud.call('cd-set-audio', { mic: $('mic').checked }).catch(() => audio); renderAudio(); };
+$('autoQuality').onchange = async () => { audio = await cloud.call('cd-set-audio', { autoQuality: $('autoQuality').checked }).catch(() => audio); renderAudio(); };
 $('lowDelay').onchange = async () => { audio = await cloud.call('cd-set-audio', { lowDelay: $('lowDelay').checked }).catch(() => audio); renderAudio(); };
 $('getVb').onclick = e => act(e.target, async () => {
   await cloud.call('cd-install-vbcable');

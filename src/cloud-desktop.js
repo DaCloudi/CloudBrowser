@@ -331,6 +331,10 @@ class CloudDesktop {
       ip: c.current_ip || (c.manual_ips || [])[0] || null,
     })).sort((a, b) => (b.wired - a.wired) || a.name.localeCompare(b.name));
     const active = headsets.find(h => h.state === 'Streaming') || headsets.find(h => h.state === 'Connected' || h.state === 'Connecting');
+    if (active && active.state === 'Streaming') {
+      const via = active.wired ? 'cable' : 'wifi';
+      if (this.prefs().lastVia !== via) { this.savePrefs({ lastVia: via }); this.applyAudio(via === 'cable').catch(() => {}); }
+    }
     const fresh = live.stats && Date.now() - live.statsAt < 5000;
     const st = fresh && active && active.state === 'Streaming' ? live.stats : null;
     return {
@@ -551,7 +555,7 @@ class CloudDesktop {
   prefsFile() { return path.join(this.dir, 'prefs.json'); }
   prefs() {
     if (!this._prefs) { try { this._prefs = JSON.parse(fs.readFileSync(this.prefsFile(), 'utf8')); } catch { this._prefs = {}; } }
-    return { mic: true, lowDelay: true, lastCable: null, ...this._prefs };
+    return { mic: true, lowDelay: true, autoQuality: true, lastCable: null, lastVia: null, ...this._prefs };
   }
   savePrefs(change) {
     this._prefs = { ...this.prefs(), ...change };
@@ -574,13 +578,15 @@ class CloudDesktop {
 
   async audioStatus() {
     const p = this.prefs();
-    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, lastCable: p.lastCable, applied: this._audioApplied || null };
+    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, autoQuality: p.autoQuality, lastCable: p.lastCable, lastVia: p.lastVia, applied: this._audioApplied || null };
   }
 
   async setAudio(change) {
-    const p = this.savePrefs({ ...(change.mic !== undefined ? { mic: !!change.mic } : {}), ...(change.lowDelay !== undefined ? { lowDelay: !!change.lowDelay } : {}) });
-    await this.applyAudio().catch(e => this.log && this.log('cloud desktop: audio settings', e.message));
-    return { ...(await this.audioStatus()), mic: p.mic, lowDelay: p.lowDelay };
+    const pick = {};
+    for (const k of ['mic', 'lowDelay', 'autoQuality']) if (change[k] !== undefined) pick[k] = !!change[k];
+    this.savePrefs(pick);
+    await this.applyAudio().catch(e => this.log && this.log('cloud desktop: settings', e.message));
+    return await this.audioStatus();
   }
 
   /**
@@ -589,9 +595,8 @@ class CloudDesktop {
    */
   async applyAudio(onCable) {
     const p = this.prefs();
-    if (onCable === undefined) {
-      try { onCable = (await this.listDevices(await this.adb(() => {}))).some(d => d.usb && d.state === 'device'); } catch { onCable = false; }
-    }
+    // How the headset connected last time (no need to touch the USB cable to find out).
+    if (onCable === undefined) onCable = p.lastVia === 'cable';
     const mic = p.mic && await this.vbCableInstalled();
     const buffer = p.lowDelay && onCable && p.lastCable !== 'slow' ? BUFFER_LOW : BUFFER_NORMAL;
     const values = [
@@ -599,7 +604,20 @@ class CloudDesktop {
       [['audio', 'microphone', 'content', 'buffering', 'average_buffering_ms'], buffer],
       [['audio', 'game_audio', 'content', 'buffering', 'average_buffering_ms'], buffer],
     ];
-    this._audioApplied = { mic, buffer, onCable };
+    // Best picture automatically: HEVC (sharper than H.264 at the same speed) and a bitrate that
+    // rises as high as the connection allows and backs off when Wi-Fi gets busy, instead of a fixed 30 Mbps.
+    const maxMbps = onCable ? 400 : 200;
+    if (p.autoQuality) {
+      values.push(
+        [['video', 'preferred_codec', 'variant'], 'Hevc'],
+        [['video', 'bitrate', 'mode', 'variant'], 'Adaptive'],
+        [['video', 'bitrate', 'mode', 'Adaptive', 'max_throughput_mbps', 'enabled'], true],
+        [['video', 'bitrate', 'mode', 'Adaptive', 'max_throughput_mbps', 'content'], maxMbps],
+        [['video', 'bitrate', 'mode', 'Adaptive', 'min_throughput_mbps', 'enabled'], true],
+        [['video', 'bitrate', 'mode', 'Adaptive', 'min_throughput_mbps', 'content'], 20],
+      );
+    }
+    this._audioApplied = { mic, buffer, onCable, quality: p.autoQuality ? { codec: 'HEVC', maxMbps } : null };
     if (await this.ping()) {
       await this.request({ SetValues: values.map(([keys, value]) => ({ path: ['session_settings', ...keys].map(k => ({ Name: k })), value })) });
       return this._audioApplied;
