@@ -1892,7 +1892,7 @@ function hudShow(w, text, mode, anchor) {
   const est = Math.min(isToast ? 420 : Math.max(120, (anchor ? anchor.width : width) * 0.6), 24 + text.length * (isToast ? 7.6 : 6.6));
   const h = isToast ? 46 : 24;
   const x = isToast ? Math.round((anchor ? anchor.x + anchor.width / 2 : width / 2) - est / 2) : (anchor ? anchor.x : w.pageX);
-  const y = (anchor ? anchor.y + anchor.height : height) - h;
+  const y = (anchor ? anchor.y + anchor.height : height) - h - (isToast ? 48 : 0); // messages float a little above the bottom
   v.setBounds({ x: Math.max(0, x), y: Math.max(0, y), width: Math.round(est), height: h });
   v.webContents.executeJavaScript(`(() => { const b = document.getElementById('b'); b.className = ${JSON.stringify(isToast ? 'toast' : '')}; b.textContent = ${JSON.stringify(text)}; })()`).catch(() => {});
   w.win.contentView.addChildView(v); // on top
