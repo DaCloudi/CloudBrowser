@@ -20,6 +20,7 @@ const { Store, flushAll } = require('./store');
 const { Vpn } = require('./vpn');
 const { DiscordLite, isDiscordHost } = require('./discord-lite');
 const { baseDomain, companyOf } = require('./trackers');
+const { CloudDesktop } = require('./cloud-desktop');
 
 let extLib = null;
 let webStoreLib = null;
@@ -3408,6 +3409,16 @@ pageHandle('set-sponsor-categories', (_ctx, cats) => {
   return settings.data.sponsorCategories;
 });
 pageHandle('vr-status', () => ({ active: vrActive, mode: settings.data.vrMode }));
+
+// Cloud Desktop (wireless PC streaming to the Quest).
+let cloudDesktop = null;
+function cd() { return cloudDesktop || (cloudDesktop = new CloudDesktop({ session: () => session.fromPartition(NORMAL_PARTITION), log })); }
+const cdProgress = (ctx) => (text) => { try { ctx.tab && ctx.tab.view.webContents.send('page:cd-progress', text); } catch {} };
+pageHandle('cd-status', () => cd().status());
+pageHandle('cd-install-pc', (ctx) => cd().installPc(cdProgress(ctx)));
+pageHandle('cd-install-quest', (ctx) => cd().installQuest(cdProgress(ctx)));
+pageHandle('cd-start', () => cd().start());
+pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
 pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });
 pageHandle('install-bitwarden', async () => { settings.data.passwordManager = 'bitwarden'; settings.save(); await ensureBitwarden(true); return bitwardenInstalled(); });

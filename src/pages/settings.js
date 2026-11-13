@@ -220,3 +220,38 @@ cloud.on('update', u => renderUpdate(u));
 cloud.on('settings', s => { if (info) { info.settings = s; fill(s); renderAdblockHint(s); } });
 
 load();
+
+// ---------- Cloud Desktop ----------
+(() => {
+  const st = $('cdStatus');
+  const buttons = ['cdInstallPc', 'cdInstallQuest', 'cdStart'].map(id => $(id));
+  let state = null;
+  const show = (s) => {
+    state = s;
+    if (!s.windows) { st.textContent = 'Cloud Desktop is for Windows PCs.'; buttons.forEach(b => b.disabled = true); return; }
+    const parts = [];
+    if (!s.available) parts.push(s.error ? `Couldn’t check for Cloud Desktop (${s.error}).` : 'Cloud Desktop is still being built. Check back soon.');
+    else parts.push(`Latest version: ${s.latest}.`);
+    parts.push(s.installed ? `Installed on this PC${s.installedVersion ? ` (${s.installedVersion})` : ''}${s.running ? ', running now' : ''}.` : 'Not installed on this PC yet.');
+    st.textContent = parts.join(' ');
+    $('cdInstallPc').textContent = s.installed ? (s.installedVersion !== s.latest && s.available ? `Update to ${s.latest}` : 'Reinstall') : 'Install on this PC';
+    $('cdInstallPc').disabled = !s.available;
+    $('cdInstallQuest').disabled = !s.available;
+    $('cdStart').disabled = !s.installed;
+    $('cdPage').disabled = !s.page;
+  };
+  const refresh = () => cloud.call('cd-status').then(show).catch(e => { st.textContent = e.message; });
+  cloud.on('cd-progress', text => { st.textContent = text; });
+  const act = (id, channel, after) => {
+    $(id).onclick = async () => {
+      buttons.forEach(b => b.disabled = true);
+      try { await cloud.call(channel); if (after) after(); } catch (e) { alert(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
+      setTimeout(refresh, 800);
+    };
+  };
+  act('cdInstallPc', 'cd-install-pc');
+  act('cdInstallQuest', 'cd-install-quest');
+  act('cdStart', 'cd-start', () => { st.textContent = 'Starting Cloud Desktop… It opens in its own window, and starts SteamVR when your Quest connects.'; });
+  $('cdPage').onclick = () => cloud.call('cd-release-page');
+  refresh();
+})();

@@ -1,0 +1,117 @@
+name: Cloud Desktop
+
+# Cloud Desktop: CloudBrowser's own wireless PC-to-Quest streamer, built from ALVR (MIT) with our branding.
+# Builds on any change under cloud-desktop/. On main it also publishes a release (as a pre-release,
+# so CloudBrowser's own auto-updater never picks it up).
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ['cloud-desktop/**', '.github/workflows/cloud-desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  quest-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get ALVR
+        run: |
+          ALVR_TAG=$(cat cloud-desktop/ALVR_VERSION)
+          git clone --depth 1 --branch "$ALVR_TAG" --recurse-submodules https://github.com/alvr-org/ALVR alvr
+      - name: Brand it as Cloud Desktop
+        run: python3 cloud-desktop/brand.py alvr cloud-desktop/cloud-desktop.keystore
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-32 build-tools;34.0.0'
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r26b
+      - name: Build the Quest app
+        working-directory: alvr
+        env:
+          RUST_BACKTRACE: 1
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: cargo xtask package-client --ci
+      - name: Sign with Cloud Desktop's key
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          cp alvr/build/alvr_client_android/alvr_client_android.apk "CloudDesktop-Quest-$VER.apk"
+          "$APKSIGNER" sign --ks cloud-desktop/cloud-desktop.keystore --ks-pass pass:alvrclient "CloudDesktop-Quest-$VER.apk"
+          "$APKSIGNER" verify --print-certs "CloudDesktop-Quest-$VER.apk" | head -5
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "CloudDesktop-Quest-$VER.apk" | grep -E "package:|application-label:" | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quest-app
+          path: CloudDesktop-Quest-*.apk
+
+  pc-streamer:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get ALVR
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          ALVR_TAG=$(cat cloud-desktop/ALVR_VERSION)
+          git clone --depth 1 --branch "$ALVR_TAG" --recurse-submodules https://github.com/alvr-org/ALVR alvr
+      - name: Brand it as Cloud Desktop
+        shell: bash
+        run: python cloud-desktop/brand.py alvr cloud-desktop/cloud-desktop.keystore
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: crazy-max/ghaction-chocolatey@v3
+        with:
+          args: install zip unzip pkgconfiglite
+      - name: Build the PC streamer
+        working-directory: alvr
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo xtask package-streamer --gpl --ci
+      - name: Package
+        shell: bash
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          ls alvr/build
+          cp alvr/build/alvr_streamer_windows.zip "CloudDesktop-PC-$VER.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc-streamer
+          path: CloudDesktop-PC-*.zip
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [quest-app, pc-streamer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          ALVR=$(cat cloud-desktop/ALVR_VERSION)
+          TAG="cloud-desktop-v$VER"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG already released"; exit 0; fi
+          gh release create "$TAG" out/* --prerelease --latest=false --title "Cloud Desktop $VER" --notes "Cloud Desktop: wireless PC streaming to your Quest, by CloudBrowser.
+          Based on ALVR $ALVR (https://github.com/alvr-org/ALVR, MIT licence).
+
+          - CloudDesktop-PC-$VER.zip: the PC streamer (needs SteamVR).
+          - CloudDesktop-Quest-$VER.apk: the Quest app (install by sideloading, or from CloudBrowser: Settings, VR, Cloud Desktop)."
