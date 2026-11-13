@@ -805,7 +805,7 @@ const PL_ICONS = {
   go: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
 };
-let plData = null, plRows = [], plSel = 0;
+let plData = null, plRows = [], plSel = 0, plLoading = null;
 function plScore(text, words) {
   const t = text.toLowerCase();
   let score = 0;
@@ -894,7 +894,9 @@ async function openPalette() {
   cloud.setOverlay(true);
   $('pl-q').focus();
   renderPalette();
-  plData = await cloud.paletteData();
+  plLoading = cloud.paletteData();
+  plData = await plLoading;
+  plLoading = null;
   if (!$('palette').hidden) renderPalette();
 }
 function closePalette(keepFocus) {
@@ -908,7 +910,13 @@ $('pl-q').addEventListener('input', () => { plSel = 0; renderPalette(); });
 $('pl-q').addEventListener('keydown', e => {
   if (e.key === 'ArrowDown') { e.preventDefault(); plSel = Math.min(plRows.length - 1, plSel + 1); markPaletteSel(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); plSel = Math.max(0, plSel - 1); markPaletteSel(); }
-  else if (e.key === 'Enter') { e.preventDefault(); runPalette(plSel, e.shiftKey); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    const shift = e.shiftKey;
+    // Typed fast? Wait for the tab list so Enter picks the right thing.
+    if (!plData && plLoading) plLoading.then(() => { renderPalette(); runPalette(plSel, shift); });
+    else runPalette(plSel, shift);
+  }
   else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
   e.stopPropagation();
 });
