@@ -84,6 +84,22 @@ edit("alvr/gui_common/src/theme.rs", [
     (r"pub const SEPARATOR_BG: Color32 = Color32::from_rgb\([^)]*\);", "pub const SEPARATOR_BG: Color32 = Color32::from_rgb(25, 33, 43);"),
 ], regex=True)
 
+# ---- Build fixes for this ALVR version (skipped when ALVR already has them) ----
+def compat(rel, old, new, regex=False):
+    p = SRC / rel
+    if not p.exists():
+        return
+    s = p.read_text(encoding="utf-8")
+    s2 = re.sub(old, new, s) if regex else s.replace(old, new)
+    if s2 != s:
+        p.write_text(s2, encoding="utf-8")
+        changes.append(f"build fix in {rel}: {old[:40]!r}")
+
+# The FFmpeg 7.1 download ALVR 20.14 asks for is gone; use 8.1 (what newer ALVR uses).
+compat("alvr/xtask/src/dependencies.rs", "ffmpeg-n7.1-latest-win64-gpl-shared-7.1", "ffmpeg-n8.1-latest-win64-gpl-shared-8.1")
+# FFmpeg 8 renamed these.
+compat("alvr/server_openvr/cpp/platform/win32/VideoEncoderSW.cpp", r"\bFF_PROFILE_H264_", "AV_PROFILE_H264_", regex=True)
+
 # ---- Our own signing key, so updates install over the top ----
 out = SRC / "build/alvr_client_android"
 out.mkdir(parents=True, exist_ok=True)
