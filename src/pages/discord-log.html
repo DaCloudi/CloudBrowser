@@ -6,13 +6,13 @@
 <title>Message Log</title>
 <style>
   :root {
-    color-scheme: dark light;
+    color-scheme: dark;
     --bg-0: #07101b; --bg-1: #0b1522; --bg-2: #0e1926; --bg-3: #13202f;
     --hl: rgba(255,255,255,.05); --hl2: rgba(255,255,255,.09); --border: rgba(255,255,255,.08);
     --text: #e8edf3; --strong: #fff; --muted: #9aa7b6; --faint: #64748a;
     --accent: #4d8dff; --red: #f2555a; --amber: #f0b232; --green: #3ba55d;
   }
-  @media (prefers-color-scheme: light) {
+  @media not all { /* CloudBrowser: always navy */
     :root {
       --bg-0: #eef1f5; --bg-1: #f6f8fa; --bg-2: #fff; --bg-3: #f2f4f7;
       --hl: rgba(7,16,27,.04); --hl2: rgba(7,16,27,.07); --border: rgba(7,16,27,.09);

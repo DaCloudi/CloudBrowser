@@ -19,6 +19,7 @@ const { execFile } = require('child_process');
 const { Store, flushAll } = require('./store');
 const { Vpn } = require('./vpn');
 const { DiscordLite, isDiscordHost } = require('./discord-lite');
+const { baseDomain, companyOf } = require('./trackers');
 
 let extLib = null;
 let webStoreLib = null;
@@ -322,6 +323,7 @@ function tabInfo(t) {
     muted: wc.isAudioMuted(),
     bookmarked: isBookmarked(url),
     pinned: !!t.pinned,
+    groupId: t.groupId || null,
     readerable: !!t.readerable,
     zoom: Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100),
     adblockOff: isAllowlisted(hostOf(url)),
@@ -366,6 +368,7 @@ function pushState(w) {
     vrActive,
     uiScale: settings.data.uiScale,
     split: splitInfo(w),
+    groups: [...w.groups.values()].map(g => ({ ...g, count: w.tabs.filter(t => t.groupId === g.id).length })),
     vpn: vpn ? vpn.info() : null,
     maximized: w.win.isMaximized(),
   });
@@ -426,7 +429,7 @@ function titleBarColors(incognito) {
 
 // ---------- windows ----------
 
-function createWindow({ incognito = false, urls, active = 0 } = {}) {
+function createWindow({ incognito = false, urls, active = 0, groups = null } = {}) {
   const saved = settings.data.window || {};
   const cur = currentWindow();
   const opts = {
@@ -449,7 +452,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   }
   const w = {
     id: nextWinId++, incognito, tabs: [], activeId: null, closedTabs: [],
-    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), split: null, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
+    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), split: null, groups: restoreGroups(groups), overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
   windows.add(w);
@@ -483,7 +486,8 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     list.forEach((u, i) => {
       const item = typeof u === 'string' ? { url: u } : u;
       // Only the visible tab loads now; the others load when first clicked (fast startup).
-      createTab(w, item.url, { activate: i === activeIdx, pinned: !!item.pinned, lazy: i !== activeIdx && list.length > 1, title: item.title, favicon: item.favicon });
+      const tt = createTab(w, item.url, { activate: i === activeIdx, pinned: !!item.pinned, lazy: i !== activeIdx && list.length > 1, title: item.title, favicon: item.favicon });
+      if (item.group && w.groups.has(item.group) && tt && !tt.pinned) tt.groupId = item.group;
     });
     layout(w);
     pushState(w);
@@ -555,6 +559,8 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
     while (i < w.tabs.length && w.tabs[i].openerId === openerId) i++;
     tab.openerId = openerId;
     w.tabs.splice(i, 0, tab);
+    const opener = w.tabs[openerIdx];
+    if (opener && opener.groupId && w.groups.has(opener.groupId) && !pinned) tab.groupId = opener.groupId; // links stay in the group
   } else if (pinned) {
     w.tabs.splice(w.tabs.filter(t => t.pinned).length, 0, tab);
   } else {
@@ -708,6 +714,7 @@ function switchTab(w, id) {
   }
   if (prevTab && prevTab.id !== id && isYouTube(tabUrl(t))) pipExit(t.view.webContents);
   w.activeId = id;
+  if (t.groupId && w.groups.get(t.groupId)?.collapsed) w.groups.get(t.groupId).collapsed = false;
   t.lastActive = Date.now();
   if (t.sleeping) wakeTab(t);
   layout(w); // shows this tab (and its split-view partner)
@@ -722,6 +729,7 @@ function closeTab(id) {
   if (!t) return;
   const w = t.w;
   if (w.split && (w.split.a === id || w.split.b === id)) w.split = null;
+  if (t.groupId) setTimeout(() => pruneGroups(w), 0);
   const idx = w.tabs.indexOf(t);
   w.tabs.splice(idx, 1);
   const url = tabUrl(t);
@@ -894,8 +902,9 @@ function toggleBookmark(tab) {
 function saveSession(final = false) {
   if (!sessionStore || (quitting && !final) || (sessionFrozen && !final)) return;
   const wins = [...windows].filter(w => !w.incognito && w.tabs.length).map(w => ({
-    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned, title: (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle() || '', favicon: t.favicon || null }))
+    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned, group: t.groupId || undefined, title: (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle() || '', favicon: t.favicon || null }))
       .filter(x => x.url && !x.url.startsWith('data:')),
+    groups: [...w.groups.values()],
     active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId)),
   })).filter(x => x.tabs.length);
   if (!wins.length && sessionFrozen) return;
@@ -911,7 +920,7 @@ function startWindows(startUrl) {
       const urls = [...x.tabs];
       let active = x.active;
       if (startUrl && i === wins.length - 1) { urls.push(startUrl); active = urls.length - 1; }
-      createWindow({ urls, active });
+      createWindow({ urls, active, groups: x.groups });
     });
   } else {
     createWindow({ urls: [startUrl || homeUrl()] });
@@ -1111,12 +1120,14 @@ async function setupAdblock() {
       if (!lookup) lookup = tabsByWc();
       const t = lookup.get(request.tabId);
       if (t) { t.blocked++; dirtyWins.add(t.w); }
+      if (t && !t.private) recordBlocked(tabUrl(t), request.hostname || request.domain || '');
       pendingBlocked++;
       if (!flushTimer) flushTimer = setTimeout(() => {
         flushTimer = null; lookup = null;
         settings.data.blockedTotal = (settings.data.blockedTotal || 0) + pendingBlocked;
         pendingBlocked = 0;
         settings.save();
+        privacyStats.save();
         for (const w of dirtyWins) sendState(w);
         dirtyWins = new Set();
       }, 300);
@@ -1170,6 +1181,7 @@ function showShieldMenu(w) {
   Menu.buildFromTemplate([
     { label: on ? `${t.blocked} ads, trackers and pop-ups blocked on this page` : 'Ad blocking is off', enabled: false },
     { label: `${(settings.data.blockedTotal || 0).toLocaleString()} blocked in total`, enabled: false },
+    { label: 'Privacy report', click: () => openInternal(w, 'privacy') },
     { type: 'separator' },
     { label: `Block on ${host || 'this site'}`, type: 'checkbox', checked: !isAllowlisted(host), enabled: on && web,
       click: () => { toggleAllowlist(host); t.view.webContents.reload(); } },
@@ -1728,6 +1740,268 @@ function dlNotify(title, body, onClick) {
     n.on('click', () => { (onClick || showDiscord)(); });
     n.show();
   } catch (e) { log('notification failed', e.message); }
+}
+
+// ---------- privacy report ----------
+// Counts of what was blocked, per day, per site and per tracker. Kept for 30 days, never for incognito.
+
+let privacyStats = null;
+function dayKey(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function recordBlocked(pageUrl, host) {
+  if (!privacyStats) return;
+  const days = privacyStats.data.days;
+  const k = dayKey();
+  let d = days[k];
+  if (!d) {
+    d = days[k] = { total: 0, sites: {}, trackers: {} };
+    const cutoff = dayKey(new Date(Date.now() - 31 * 864e5));
+    for (const key of Object.keys(days)) if (key < cutoff) delete days[key];
+  }
+  d.total++;
+  const site = hostOf(pageUrl).replace(/^www\./, '');
+  if (site) d.sites[site] = (d.sites[site] || 0) + 1;
+  const tr = baseDomain(host);
+  if (tr) d.trackers[tr] = (d.trackers[tr] || 0) + 1;
+  // Keep each day small: drop the long tail once it gets big.
+  for (const key of ['sites', 'trackers']) {
+    const o = d[key], n = Object.keys(o).length;
+    if (n > 400) for (const [name] of Object.entries(o).sort((a, b) => a[1] - b[1]).slice(0, n - 300)) delete o[name];
+  }
+}
+function privacyReport(range) {
+  const days = privacyStats ? privacyStats.data.days : {};
+  const n = range === 30 ? 30 : 7;
+  const list = [];
+  const sites = {}, trackers = {};
+  for (let i = n - 1; i >= 0; i--) {
+    const k = dayKey(new Date(Date.now() - i * 864e5));
+    const d = days[k];
+    list.push({ date: k, total: d ? d.total : 0 });
+    if (!d) continue;
+    for (const [h, c] of Object.entries(d.sites)) sites[h] = (sites[h] || 0) + c;
+    for (const [h, c] of Object.entries(d.trackers)) trackers[h] = (trackers[h] || 0) + c;
+  }
+  const companies = {};
+  for (const [dom, c] of Object.entries(trackers)) {
+    const name = companyOf(dom) || dom;
+    const x = companies[name] || (companies[name] = { name, known: !!companyOf(dom), count: 0, domains: [] });
+    x.count += c;
+    x.domains.push(dom);
+  }
+  return {
+    days: list,
+    total: list.reduce((a, d) => a + d.total, 0),
+    allTime: settings.data.blockedTotal || 0,
+    companies: Object.values(companies).sort((a, b) => b.count - a.count).slice(0, 15).map(c => ({ ...c, domains: c.domains.slice(0, 6) })),
+    sites: Object.entries(sites).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([host, count]) => ({ host, count, allowed: isAllowlisted(host) })),
+    protections: {
+      adblock: !!settings.data.adblock, vpn: !!settings.data.vpnEnabled, vpnMode: settings.data.vpnMode,
+      gpc: !!settings.data.sendGpc, stripTracking: !!settings.data.stripTracking, incognitoVpn: !!settings.data.incognitoVpn,
+      clearOnExit: !!settings.data.clearOnExit, allowlist: (settings.data.adblockAllowlist || []).length,
+    },
+  };
+}
+pageHandle('privacy-report', (_ctx, range) => privacyReport(Number(range)));
+pageHandle('privacy-reset', () => { privacyStats.data.days = {}; privacyStats.save(); return privacyReport(7); });
+// "Forget this site": its cookies, storage, cache and history.
+pageHandle('forget-site', async (_ctx, host) => {
+  host = String(host || '').toLowerCase().replace(/^www\./, '');
+  if (!/^[a-z0-9.-]+$/.test(host)) throw new Error('Bad site');
+  const ses = session.fromPartition(NORMAL_PARTITION);
+  let cookies = 0;
+  for (const c of await ses.cookies.get({})) {
+    const d = (c.domain || '').replace(/^\./, '');
+    if (d === host || d.endsWith('.' + host)) {
+      const url = `http${c.secure ? 's' : ''}://${d}${c.path || '/'}`;
+      await ses.cookies.remove(url, c.name).catch(() => {});
+      cookies++;
+    }
+  }
+  for (const origin of [`https://${host}`, `https://www.${host}`, `http://${host}`, `http://www.${host}`]) {
+    await ses.clearStorageData({ origin }).catch(() => {});
+  }
+  const before = history.data.items.length;
+  history.data.items = history.data.items.filter(h => { const x = hostOf(h.url).replace(/^www\./, ''); return x !== host && !x.endsWith('.' + host); });
+  history.save();
+  for (const k of Object.keys(permissions.data.sites)) if (hostOf(k).replace(/^www\./, '') === host) delete permissions.data.sites[k];
+  permissions.save();
+  return { cookies, history: before - history.data.items.length };
+});
+
+// ---------- command bar (Ctrl+K) ----------
+// Everything you can do, searchable: actions live here so the bar always matches what's possible.
+
+function paletteActions(w) {
+  const t = activeTab(w);
+  const wc = t && t.view.webContents;
+  const url = t ? tabUrl(t) : '';
+  const web = /^https?:/.test(url);
+  const id = discordAppId();
+  const list = [
+    ['new-tab', 'New tab', 'Ctrl+T', () => { createTab(w); focusAddress(w); }],
+    ['new-window', 'New window', 'Ctrl+N', () => newWindow(false)],
+    ['new-incognito', 'New incognito window', 'Ctrl+Shift+N', () => newWindow(true)],
+    ['reopen', 'Reopen closed tab', 'Ctrl+Shift+T', () => reopenClosedTab(w), w.closedTabs.length > 0],
+    ['close-tab', 'Close this tab', 'Ctrl+W', () => t && closeTab(t.id), !!t],
+    ['close-others', 'Close other tabs', '', () => w.tabs.filter(x => x.id !== t.id && !x.pinned).map(x => x.id).forEach(closeTab), w.tabs.length > 1],
+    ['duplicate', 'Duplicate tab', '', () => createTab(w, url, { openerId: t.id }), !!t],
+    ['pin', t && t.pinned ? 'Unpin tab' : 'Pin tab', '', () => togglePin(t), !!t],
+    ['mute', wc && wc.isAudioMuted() ? 'Unmute this tab' : 'Mute this tab', '', () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); }, !!wc],
+    ['mute-all', 'Mute all other tabs', '', () => { for (const x of allTabs()) if (x !== t) x.view.webContents.setAudioMuted(true); sendStateAll(); }],
+    ['sleep-others', 'Put other tabs to sleep', '', () => { for (const x of w.tabs) if (!isOnScreen(x)) sleepTab(x, true); }],
+    ['group', t && t.groupId ? 'Remove tab from its group' : 'Add tab to a new group', 'Ctrl+Shift+G', () => (t.groupId ? ungroupTabs(w, [t.id]) : newGroup(w, [t.id])), !!t && !t.pinned],
+    ['split', splitShowing(w) ? 'Close split view' : 'Split view (two tabs side by side)', 'Ctrl+Shift+E', () => toggleSplit(w), !!t],
+    ['pop-out', 'Pop out tab (floating, always on top)', '', () => popOutTab(t), !!t],
+    ['reload', 'Reload page', 'Ctrl+R', () => wc.reload(), !!wc],
+    ['bookmark', isBookmarked(url) ? 'Remove bookmark' : 'Bookmark this page', 'Ctrl+D', () => toggleBookmark(t), web],
+    ['reader', 'Reader view', 'F9', () => openReader(t), !!(t && t.readerable)],
+    ['translate', 'Translate this page', '', () => translateTab(t), web],
+    ['screenshot', 'Take a screenshot', 'Ctrl+Shift+S', () => screenshot(w), !!wc],
+    ['find', 'Find on page', 'Ctrl+F', () => { uiSend(w, 'find-open'); w.ui.webContents.focus(); }, !!wc],
+    ['print', 'Print', 'Ctrl+P', () => wc.print(), !!wc],
+    ['zoom-reset', 'Reset zoom', 'Ctrl+0', () => zoom(wc, 0), !!wc],
+    ['adblock-site', web && isAllowlisted(hostOf(url)) ? `Turn ad blocking back on for ${hostOf(url)}` : `Allow ads on ${hostOf(url) || 'this site'}`, '', () => toggleAllowlist(hostOf(url)), web],
+    ['vpn', settings.data.vpnEnabled ? 'Turn VPN off' : 'Turn VPN on', '', () => vpn && vpn.setEnabled(!settings.data.vpnEnabled), !!vpn],
+    ['vpn-new-ip', 'VPN: get a new IP address', '', () => vpn && vpn.restart(), !!vpn && settings.data.vpnEnabled],
+    ['discord', 'Open Discord', 'Ctrl+Shift+D', () => togglePanel(w, id), !!id && !w.incognito],
+    ['discord-window', 'Discord in its own window', '', () => popOutDiscord(w), !!id && !w.incognito && !discordPop],
+    ['discord-settings', 'Discord Lite settings', '', () => openInternal(w, 'discord-settings'), !!discordLite && settings.data.discordLite],
+    ['discord-log', 'Discord message log', '', () => openInternal(w, 'discord-log'), !!discordLite && settings.data.discordLite],
+    ['bitwarden', 'Open Bitwarden', 'Ctrl+Shift+L', () => openBitwarden(w), !w.incognito],
+    ['vertical', settings.data.verticalTabs ? 'Turn off vertical tabs' : 'Turn on vertical tabs', '', () => setSetting('verticalTabs', !settings.data.verticalTabs)],
+    ['bookmarks-bar', settings.data.showBookmarksBar ? 'Hide bookmarks bar' : 'Show bookmarks bar', 'Ctrl+Shift+B', () => setSetting('showBookmarksBar', !settings.data.showBookmarksBar)],
+    ['privacy-report', 'Privacy report', '', () => openInternal(w, 'privacy')],
+    ['history', 'History', 'Ctrl+H', () => openInternal(w, 'history')],
+    ['downloads', 'Downloads', 'Ctrl+J', () => openInternal(w, 'downloads')],
+    ['bookmarks', 'Bookmarks', 'Ctrl+Shift+O', () => openInternal(w, 'bookmarks')],
+    ['extensions', 'Extensions', '', () => openInternal(w, 'extensions')],
+    ['settings', 'Settings', 'Ctrl+,', () => openInternal(w, 'settings')],
+    ['clear-data', 'Clear browsing data', 'Ctrl+Shift+Del', () => openInternal(w, 'settings', '#privacy')],
+    ['devtools', 'Developer tools', 'F12', () => wc.toggleDevTools(), !!wc],
+    ['fullscreen', 'Full screen', 'F11', () => setFullscreen(w, !w.win.isFullScreen())],
+    ['check-update', 'Check for updates', '', () => checkForUpdates(true)],
+  ];
+  const settingsPages = [
+    ['Default browser', '#default'], ['Passwords (Bitwarden)', '#passwords'], ['VPN settings', '#vpn'], ['Search engine', '#search'],
+    ['Sidebar apps & YouTube', '#apps'], ['VR settings & interface size', '#vr'], ['On start-up & sleeping tabs', '#startup'],
+    ['Privacy & security settings', '#privacy'], ['About CloudBrowser', '#about'],
+  ].map(([label, hash]) => ['settings' + hash, label, 'Settings', () => openInternal(w, 'settings', hash)]);
+  return [...list, ...settingsPages].filter(a => a[4] !== false);
+}
+ipcMain.handle('ui:palette', (e) => {
+  const w = [...windows].find(x => x.ui.webContents === e.sender);
+  if (!w) return null;
+  const tabs = [...windows].filter(o => o.incognito === w.incognito).flatMap(o => o.tabs.map(t => {
+    const i = tabInfo(t);
+    const g = t.groupId && o.groups.get(t.groupId);
+    return { id: t.id, title: i.title, url: i.url, favicon: i.favicon, active: o === w && t.id === w.activeId, group: g ? g.name || 'Group' : '', otherWindow: o !== w };
+  }));
+  return {
+    tabs,
+    actions: paletteActions(w).map(a => ({ id: a[0], label: a[1], keys: a[2] })),
+    bookmarks: bookmarks.data.items.slice(0, 500).map(b => ({ title: b.title, url: b.url, favicon: b.favicon })),
+    history: w.incognito ? [] : history.data.items.slice(0, 400).map(h => ({ title: h.title, url: h.url })),
+  };
+});
+uiOn('palette-run', (w, id) => {
+  const a = paletteActions(w).find(x => x[0] === id);
+  if (a) { try { a[3](); } catch (e) { log('palette action failed', id, e.message); } }
+});
+
+// ---------- tab groups ----------
+
+const GROUP_COLOURS = {
+  grey: { name: 'Grey', hex: '#8a96a6' }, blue: { name: 'Blue', hex: '#4d8dff' }, red: { name: 'Red', hex: '#f0565b' },
+  yellow: { name: 'Yellow', hex: '#f4c542' }, green: { name: 'Green', hex: '#3ba55d' }, pink: { name: 'Pink', hex: '#f06bb4' },
+  purple: { name: 'Purple', hex: '#a774ff' }, cyan: { name: 'Cyan', hex: '#33c8d8' }, orange: { name: 'Orange', hex: '#ff8f3d' },
+};
+let groupSeq = 0;
+function restoreGroups(list) {
+  const m = new Map();
+  for (const g of Array.isArray(list) ? list : []) {
+    if (!g || typeof g.id !== 'string') continue;
+    m.set(g.id, { id: g.id, name: String(g.name || '').slice(0, 40), color: GROUP_COLOURS[g.color] ? g.color : 'blue', collapsed: !!g.collapsed });
+  }
+  return m;
+}
+function groupColour(w) {
+  const used = new Set([...w.groups.values()].map(g => g.color));
+  return Object.keys(GROUP_COLOURS).find(c => c !== 'grey' && !used.has(c)) || 'blue';
+}
+// Keep each group's tabs side by side (in the order of its first tab) and drop empty groups.
+function tidyGroups(w) {
+  const order = [];
+  const seenGroups = new Set();
+  for (const t of w.tabs) {
+    if (!t.groupId || !w.groups.has(t.groupId)) { t.groupId = t.groupId && w.groups.has(t.groupId) ? t.groupId : null; if (!t.groupId) { order.push(t); continue; } }
+    if (seenGroups.has(t.groupId)) continue;
+    seenGroups.add(t.groupId);
+    order.push(...w.tabs.filter(x => x.groupId === t.groupId));
+  }
+  w.tabs = order;
+  pruneGroups(w, false);
+}
+function pruneGroups(w, send = true) {
+  let changed = false;
+  for (const id of [...w.groups.keys()]) if (!w.tabs.some(t => t.groupId === id)) { w.groups.delete(id); changed = true; }
+  if (changed && send) { sendState(w); saveSession(); }
+}
+function newGroup(w, tabIds, name = '') {
+  const id = 'g' + Date.now().toString(36) + (groupSeq++);
+  w.groups.set(id, { id, name, color: groupColour(w), collapsed: false });
+  addToGroup(w, tabIds, id);
+  if (!name) uiSend(w, 'group-rename', id); // type a name straight away
+  return id;
+}
+function addToGroup(w, tabIds, gid) {
+  const g = w.groups.get(gid);
+  if (!g) return;
+  for (const id of tabIds) { const t = w.tabs.find(x => x.id === id); if (t && !t.pinned) t.groupId = gid; }
+  g.collapsed = false;
+  tidyGroups(w);
+  sendState(w); saveSession();
+}
+function ungroupTabs(w, tabIds) {
+  for (const id of tabIds) { const t = w.tabs.find(x => x.id === id); if (t) t.groupId = null; }
+  // Ungrouped tabs move just after their old group so they don't split it.
+  tidyGroups(w);
+  sendState(w); saveSession();
+}
+function setGroupCollapsed(w, gid, collapsed) {
+  const g = w.groups.get(gid);
+  if (!g) return;
+  g.collapsed = collapsed;
+  const t = activeTab(w);
+  if (collapsed && t && t.groupId === gid) {
+    // The page you're on is folding away: go to the nearest tab outside the group.
+    const idx = w.tabs.indexOf(t);
+    const outside = [...w.tabs.slice(idx + 1), ...w.tabs.slice(0, idx).reverse()].find(x => x.groupId !== gid && !(x.groupId && w.groups.get(x.groupId)?.collapsed));
+    if (outside) switchTab(w, outside.id);
+    else { const nt = createTab(w, homeUrl()); nt.groupId = null; }
+  }
+  sendState(w); saveSession();
+}
+function showGroupMenu(w, gid) {
+  const g = w.groups.get(gid);
+  if (!g) return;
+  const tabs = w.tabs.filter(t => t.groupId === gid);
+  Menu.buildFromTemplate([
+    { label: g.name || 'Unnamed group', enabled: false },
+    { type: 'separator' },
+    { label: 'Rename', click: () => uiSend(w, 'group-rename', gid) },
+    { label: 'Colour', submenu: Object.entries(GROUP_COLOURS).map(([c, x]) => ({ label: x.name, type: 'radio', checked: g.color === c, click: () => { g.color = c; sendState(w); saveSession(); } })) },
+    { label: g.collapsed ? 'Expand' : 'Collapse', click: () => setGroupCollapsed(w, gid, !g.collapsed) },
+    { type: 'separator' },
+    { label: 'New tab in group', click: () => { const nt = createTab(w, homeUrl(), { openerId: tabs[tabs.length - 1]?.id }); addToGroup(w, [nt.id], gid); } },
+    { label: 'Move group to new window', click: () => {
+      const items = tabs.map(t => ({ url: tabUrl(t), group: gid }));
+      const saved = { ...g, collapsed: false };
+      tabs.forEach(t => closeTab(t.id));
+      createWindow({ incognito: w.incognito, urls: items, groups: [saved] });
+    } },
+    { label: 'Ungroup', click: () => { ungroupTabs(w, tabs.map(t => t.id)); w.groups.delete(gid); sendState(w); } },
+    { label: `Close group (${tabs.length} tab${tabs.length === 1 ? '' : 's'})`, click: () => tabs.forEach(t => closeTab(t.id)) },
+  ]).popup({ window: w.win });
 }
 
 // ---------- split view: two tabs side by side ----------
@@ -2352,6 +2626,8 @@ function handleShortcut(w, input) {
   if (ctrl && shift && key === 's') { screenshot(w); return true; }
   if (ctrl && shift && key === 'l') { openBitwarden(w); return true; }
   if (ctrl && shift && key === 'e') { toggleSplit(w); return true; }
+  if (ctrl && !shift && key === 'k') { uiSend(w, 'palette-open'); w.ui.webContents.focus(); return true; }
+  if (ctrl && shift && key === 'g') { if (t && !t.pinned) { if (t.groupId) setGroupCollapsed(w, t.groupId, true); else newGroup(w, [t.id]); } return true; }
   if (ctrl && shift && key === 'd') { const id = discordAppId(); if (id && !w.incognito) togglePanel(w, id); return true; }
   if (input.alt && key === 'arrowleft') { wc && wc.navigationHistory.goBack(); return true; }
   if (input.alt && key === 'arrowright') { wc && wc.navigationHistory.goForward(); return true; }
@@ -2531,7 +2807,16 @@ function showTabMenu(w, id) {
     }]),
     { label: 'Pop out (floating, always on top)', click: () => popOutTab(t) },
     ...(settings.data.sidebarAppsEnabled && !w.incognito && /^https?:/.test(tabUrl(t)) ? [{ label: 'Add to sidebar', click: () => addSidebarApp(t.view.webContents.getTitle() || hostOf(tabUrl(t)), tabUrl(t)) }] : []),
-    { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => togglePin(t) },
+    ...(t.pinned ? [] : t.groupId ? [
+      { label: 'Remove from group', click: () => ungroupTabs(w, [t.id]) },
+    ] : [{
+      label: 'Add to group', submenu: [
+        { label: 'New group', click: () => newGroup(w, [t.id]) },
+        ...(w.groups.size ? [{ type: 'separator' }] : []),
+        ...[...w.groups.values()].map(g => ({ label: g.name || GROUP_COLOURS[g.color].name + ' group', click: () => addToGroup(w, [t.id], g.id) })),
+      ],
+    }]),
+    { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => { if (!t.pinned) t.groupId = null; togglePin(t); pruneGroups(w); } },
     { label: 'Put tab to sleep', enabled: !isOnScreen(t) && !t.sleeping, click: () => sleepTab(t, true) },
     { label: 'Move to new window', enabled: w.tabs.length > 1, click: () => { const u = tabUrl(t); closeTab(id); createWindow({ incognito: w.incognito, urls: [u] }); } },
     { label: wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); } },
@@ -2715,6 +3000,11 @@ uiOn('shield-menu', w => showShieldMenu(w));
 uiOn('translate-menu', w => showTranslateMenu(w));
 uiOn('sidebar-app', (w, id) => togglePanel(w, id));
 uiOn('split-toggle', w => toggleSplit(w));
+uiOn('group-toggle', (w, gid) => { const g = w.groups.get(gid); if (g) setGroupCollapsed(w, gid, !g.collapsed); });
+uiOn('group-menu', (w, gid) => showGroupMenu(w, gid));
+uiOn('group-rename', (w, gid, name) => { const g = w.groups.get(gid); if (g) { g.name = String(name || '').trim().slice(0, 40); sendState(w); saveSession(); } });
+uiOn('group-add', (w, tabId, gid) => addToGroup(w, [tabId], gid));
+uiOn('group-new', w => { const t = activeTab(w); if (t && !t.pinned) newGroup(w, [t.id]); });
 uiOn('split-ratio', (w, r) => { r = Number(r); if (w.split && r >= 0.15 && r <= 0.85) { w.split.ratio = r; layout(w); sendState(w); } });
 uiOn('split-menu', w => {
   if (!w.split) return;
@@ -2748,6 +3038,13 @@ uiOn('move-tab', (w, id, toIndex) => {
   let to = Math.max(0, Math.min(w.tabs.length, Number(toIndex) || 0));
   to = t.pinned ? Math.min(to, pinnedCount) : Math.max(to, pinnedCount); // pinned tabs stay first
   w.tabs.splice(to, 0, t);
+  // Dropped between two tabs of a group: join it. Dropped outside its group: leave it.
+  const before = w.tabs[to - 1], after = w.tabs[to + 1];
+  if (!t.pinned) {
+    if (before && after && before.groupId && before.groupId === after.groupId) t.groupId = before.groupId;
+    else if (t.groupId && !(before && before.groupId === t.groupId) && !(after && after.groupId === t.groupId)) t.groupId = null;
+  }
+  pruneGroups(w);
   sendState(w);
   saveSession();
 });
@@ -3016,6 +3313,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     downloadStore = new Store('downloads', { items: [] });
     sessionStore = new Store('session', { windows: [] });
     extGrants = new Store('extension-permissions', { grants: {} });
+    privacyStats = new Store('privacy-stats', { days: {} });
     downloads = (downloadStore.data.items || []).map(d => (d.state === 'progressing' || d.state === 'paused') ? { ...d, state: 'interrupted' } : d);
     nextDownloadId = downloads.reduce((m, d) => Math.max(m, d.id || 0), 0) + 1;
     nativeTheme.themeSource = settings.data.theme;
@@ -3339,6 +3637,90 @@ async function smokeTest() {
     fakeVr = false; checkVr();
     await wait(2000);
     S('vr: off again', !vrActive, 'page rect', w.pageX, w.pageY);
+  });
+
+  await step('tab groups', async () => {
+    const a = activeTab(w);
+    load(a.view.webContents, 'https://www.roblox.com/');
+    const b = createTab(w, 'https://example.org/');
+    const c = createTab(w, 'https://en.wikipedia.org/wiki/Cloud');
+    await wait(3000);
+    switchTab(w, a.id);
+    const gid = newGroup(w, [a.id]);
+    await wait(900);
+    S('groups: rename box open', await ui(w, `!!document.querySelector('.group-chip.renaming .gname-input')`));
+    await ui(w, `(() => { const i = document.querySelector('.gname-input'); i.value = 'Roblox'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+    await wait(500);
+    addToGroup(w, [c.id], gid);
+    const child = createTab(w, 'https://example.com/', { openerId: a.id, activate: false });
+    await wait(800);
+    const g = w.groups.get(gid);
+    S('groups: name', g && g.name, '| colour', g && g.color, '| members', w.tabs.filter(t => t.groupId === gid).length,
+      '| link from grouped tab joined', child.groupId === gid, '| kept together', JSON.stringify(w.tabs.map(t => t.groupId ? 'G' : '-').join('')));
+    await screen('tab-groups');
+    // Collapse it from the chip: the active tab was in it, so CloudBrowser moves to one outside.
+    await ui(w, `document.querySelector('.group-chip').click()`);
+    await wait(700);
+    S('groups: collapsed', w.groups.get(gid).collapsed, '| hidden tabs', await ui(w, `document.querySelectorAll('.tab.group-hidden').length`), '| active outside group', activeTab(w).groupId !== gid);
+    await screen('tab-groups-collapsed');
+    switchTab(w, a.id);
+    await wait(400);
+    S('groups: switching into it expands', !w.groups.get(gid).collapsed);
+    saveSession();
+    S('groups: saved with session', JSON.stringify((sessionStore.data.windows[0] || {}).groups));
+    ungroupTabs(w, w.tabs.filter(t => t.groupId === gid).map(t => t.id));
+    S('groups: ungrouped, group gone', !w.groups.has(gid));
+    [b, child].forEach(t => closeTab(t.id));
+    switchTab(w, c.id);
+  });
+
+  await step('command bar', async () => {
+    uiSend(w, 'palette-open');
+    w.ui.webContents.focus();
+    await wait(1200);
+    const type = async (q) => { await ui(w, `(() => { const i = document.getElementById('pl-q'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`); await wait(400); };
+    S('palette: open', await ui(w, `!document.getElementById('palette').hidden`), '| rows with nothing typed', await ui(w, `document.querySelectorAll('.pl-row').length`));
+    await type('spl');
+    S('palette: "spl" →', await ui(w, `[...document.querySelectorAll('.pl-row .pl-label')].slice(0, 3).map(x => x.textContent).join(' | ')`));
+    await type('privacy');
+    await screen('command-bar');
+    S('palette: "privacy" →', await ui(w, `[...document.querySelectorAll('.pl-row .pl-label')].slice(0, 4).map(x => x.textContent).join(' | ')`));
+    // Jump to a tab by typing part of its title.
+    const target = createTab(w, 'https://example.org/', { activate: false });
+    await wait(2500);
+    switchTab(w, c.id);
+    uiSend(w, 'palette-open');
+    await wait(800);
+    await type('example domain');
+    await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
+    await wait(800);
+    S('palette: Enter switched to the tab', w.activeId === target.id, '| closed', await ui(w, `document.getElementById('palette').hidden`));
+    // Run an action from it.
+    uiSend(w, 'palette-open');
+    await wait(800);
+    await type('vertical tabs');
+    await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
+    await wait(800);
+    S('palette: action ran (vertical tabs on)', settings.data.verticalTabs);
+    await screen('vertical-after-palette');
+    setSetting('verticalTabs', false);
+    closeTab(target.id);
+  });
+
+  await step('privacy report', async () => {
+    // Browse somewhere with trackers first.
+    const t2 = createTab(w, 'https://www.theverge.com/');
+    await waitFor(() => !t2.view.webContents.isLoading(), 25000);
+    await wait(3000);
+    privacyStats.flush();
+    openInternal(w, 'privacy');
+    await wait(2500);
+    const pt = activeTab(w);
+    S('privacy: page', tabUrl(pt), '|', JSON.stringify((await pt.view.webContents.executeJavaScript('document.querySelector("main").innerText').catch(e => e.message)).slice(0, 420)));
+    await screen('privacy-report');
+    S('privacy: forget site', JSON.stringify(await pt.view.webContents.executeJavaScript(`cloud.call('forget-site', 'theverge.com')`).catch(e => e.message)));
+    closeTab(t2.id);
+    closeTab(pt.id);
   });
 
   await step('split view', async () => {

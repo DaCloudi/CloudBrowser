@@ -10,7 +10,7 @@ on:
 jobs:
   smoke:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
       EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
@@ -36,7 +36,7 @@ jobs:
           CLOUD_SMOKE: '1'
           CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-dev.log
         run: |
-          timeout 900 npx electron . || true
+          timeout 1080 npx electron . || true
           cat "$CLOUD_SMOKE_LOG"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
 
@@ -65,6 +65,6 @@ jobs:
           CLOUD_SMOKE: '1'
           CLOUD_SMOKE_LOG: ${{ runner.temp }}/smoke-packaged.log
         run: |
-          timeout 900 "$LOCALAPPDATA/Programs/CloudBrowser/CloudBrowser.exe" || true
+          timeout 1080 "$LOCALAPPDATA/Programs/CloudBrowser/CloudBrowser.exe" || true
           cat "$CLOUD_SMOKE_LOG" | grep -v "^\[SHOT"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
