@@ -302,10 +302,11 @@ function pagesSend(channel, data) {
 
 // ---------- state to the UI ----------
 
+let statePushes = 0;
 function sendState(w) {
   if (!w || w.stateQueued) return;
   w.stateQueued = true;
-  setTimeout(() => { w.stateQueued = false; pushState(w); }, 33);
+  setTimeout(() => { w.stateQueued = false; statePushes++; pushState(w); }, 33);
 }
 function sendStateAll() { for (const w of windows) sendState(w); }
 
@@ -3468,10 +3469,11 @@ async function smokeTest() {
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
 
   // Memory and CPU, by what each process is.
-  const perfSnapshot = async (label, seconds = 8) => {
-    app.getAppMetrics(); // starts the CPU measuring window
+  const perfSnapshot = async (label, seconds = 10) => {
+    const before = new Map(app.getAppMetrics().map(m => [m.pid, m.cpu.cumulativeCPUUsage || 0]));
     await wait(seconds * 1000);
     const metrics = app.getAppMetrics();
+    for (const m of metrics) m.cpuPct = before.has(m.pid) ? ((m.cpu.cumulativeCPUUsage || 0) - before.get(m.pid)) / seconds * 100 : 0;
     const byPid = new Map();
     for (const wc of webContents.getAllWebContents()) {
       let kind = 'other';
@@ -3488,8 +3490,9 @@ async function smokeTest() {
     for (const m of metrics) {
       const kind = m.type === 'Tab' ? (byPid.get(m.pid) || 'tab (other)') : m.type;
       const g = groups[kind] || (groups[kind] = { n: 0, mb: 0, cpu: 0 });
-      g.n++; g.mb += m.memory.workingSetSize / 1024; g.cpu += m.cpu.percentUsage;
-      cpu += m.cpu.percentUsage; mem += m.memory.workingSetSize / 1024;
+      const mb = (m.memory.privateBytes || m.memory.workingSetSize) / 1024; // private memory: what each process really costs
+      g.n++; g.mb += mb; g.cpu += m.cpuPct;
+      cpu += m.cpuPct; mem += mb;
     }
     const parts = Object.entries(groups).sort((a, b) => b[1].mb - a[1].mb).map(([k, g]) => `${k} ×${g.n}: ${Math.round(g.mb)} MB, ${g.cpu.toFixed(1)}% CPU`);
     log(`[PERF] ${label}: ${metrics.length} processes, ${Math.round(mem)} MB, ${cpu.toFixed(1)}% CPU | ${parts.join(' | ')}`);
@@ -3501,9 +3504,14 @@ async function smokeTest() {
     const sites = ['https://en.wikipedia.org/wiki/Cloud', 'https://www.youtube.com/', 'https://www.theverge.com/', 'https://github.com/', 'https://www.bbc.co.uk/news'];
     const opened = [];
     const t0 = Date.now();
+    const { monitorEventLoopDelay } = require('perf_hooks');
+    const lag = monitorEventLoopDelay({ resolution: 10 });
+    lag.enable();
+    const pushes0 = statePushes;
     for (const u of sites) opened.push(createTab(w, u));
     await waitFor(() => opened.every(x => !x.view.webContents.isLoading()), 40000);
-    log(`[PERF] 5 sites loaded side by side in ${Date.now() - t0} ms`);
+    lag.disable();
+    log(`[PERF] 5 sites loaded side by side in ${Date.now() - t0} ms | main process blocked: worst ${(lag.max / 1e6).toFixed(0)} ms, 99th pct ${(lag.percentile(99) / 1e6).toFixed(0)} ms, mean ${(lag.mean / 1e6).toFixed(1)} ms | toolbar updates ${statePushes - pushes0}`);
     await wait(4000);
     await perfSnapshot('5 sites open (idle)');
     // Tab switching: time until the page is on screen and the toolbar has updated.
