@@ -487,3 +487,10 @@ svg .fill, svg.fill { fill: currentColor; stroke: none; }
 /* ---------- auto-refresh indicator ---------- */
 .tab .autorefresh { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--accent); }
 .tab .autorefresh svg { width: 13px; height: 13px; }
+
+/* ---------- Lite mode button (YouTube Lite, Roblox Lite) ---------- */
+#lite-btn { display: none; align-items: center; gap: 2px; height: 22px; padding: 0 4px 0 9px; margin: 0 2px; border: 0; border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font: 600 11.5px system-ui, sans-serif; cursor: pointer; flex: none; white-space: nowrap; }
+#lite-btn.show { display: flex; }
+#lite-btn:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+#lite-btn svg { width: 14px; height: 14px; }

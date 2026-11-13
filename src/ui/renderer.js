@@ -36,6 +36,7 @@ $('star').onclick = () => cloud.toggleBookmark();
 $('shield').onclick = () => cloud.shieldMenu();
 $('reader-btn').onclick = () => cloud.reader();
 $('translate-btn').onclick = () => cloud.translateMenu();
+$('lite-btn').onclick = () => cloud.liteMenu();
 cloud.onOpenExtension(id => openExtension(id));
 $('zoom-badge').onclick = () => cloud.resetZoom();
 address.addEventListener('contextmenu', e => { e.preventDefault(); cloud.addressMenu(address.selectionStart !== address.selectionEnd); });
@@ -665,6 +666,9 @@ function render() {
   zb.classList.toggle('show', !!zoomed);
   zb.textContent = zoomed ? `${tab.zoom}%` : '';
   $('reader-btn').classList.toggle('show', !!(tab && tab.readerable));
+  const lite = $('lite-btn');
+  lite.classList.toggle('show', !!(tab && tab.lite));
+  if (tab && tab.lite && $('lite-name').textContent !== tab.lite) $('lite-name').textContent = tab.lite;
   const tr = $('translate-btn');
   tr.classList.toggle('show', !!(tab && (tab.translatable || tab.translated)));
   tr.classList.toggle('on', !!(tab && tab.translated));

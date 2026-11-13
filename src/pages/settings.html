@@ -53,13 +53,27 @@
     </section>
 
     <section id="apps">
-      <h2>Sidebar apps &amp; YouTube</h2>
+      <h2>Sidebar apps, YouTube Lite &amp; Roblox Lite</h2>
       <label class="row"><div><div class="label">Sidebar apps</div><div class="hint">Discord, YouTube Music, VRChat and your own picks on the right edge. They keep running when hidden, so music keeps playing. Right-click an app to resize, reorder or remove it.</div></div>
         <input type="checkbox" class="switch" id="sidebarAppsEnabled"></label>
       <label class="row"><div><div class="label">Discord Lite</div><div class="hint">The Discord sidebar app runs your Discord Lite: Vencord, Message Logger+, Call Enhancer, themes, Lite mode, notifications and global push-to-talk. Ctrl+Shift+D opens it. Reloads Discord when changed.</div></div>
         <input type="checkbox" class="switch" id="discordLite"></label>
       <div class="row" id="dlRow"><div><div class="label">Discord Lite settings &amp; message log</div><div class="hint">Shared with the Discord Lite app, so your theme, plugins and logs are the same in both.</div></div>
         <div class="inline"><button id="dlSettings" class="btn">Discord Lite settings</button><button id="dlLog" class="btn">Message log</button></div></div>
+      <h3 class="sub">YouTube Lite</h3>
+      <label class="row"><div><div class="label">YouTube Lite</div><div class="hint">Your own YouTube: the settings below, plus a “YouTube Lite” button in the address bar on YouTube for quick changes.</div></div>
+        <input type="checkbox" class="switch" data-lite="ytLite.enabled"></label>
+      <div class="row"><div><div class="label">Video quality</div><div class="hint">Videos start in this quality instead of YouTube’s guess.</div></div>
+        <select data-lite="ytLite.quality"><option value="max">Always the best available</option><option value="2160">Up to 4K</option><option value="1440">Up to 1440p</option><option value="1080">Up to 1080p</option><option value="720">Up to 720p (saves data)</option><option value="auto">Let YouTube choose</option></select></div>
+      <label class="row"><div><div class="label">Show dislike counts</div><div class="hint">Estimated by the Return YouTube Dislike project. CloudBrowser asks it about each video you open (through your VPN if it’s on).</div></div>
+        <input type="checkbox" class="switch" data-lite="ytLite.dislikes"></label>
+      <label class="row"><div><div class="label">Remember my playback speed</div></div><input type="checkbox" class="switch" data-lite="ytLite.rememberSpeed"></label>
+      <label class="row"><div><div class="label">Skip any ads that get past the blocker</div></div><input type="checkbox" class="switch" data-lite="ytLite.skipAds"></label>
+      <label class="row"><div><div class="label">Navy theme</div><div class="hint">Matches CloudBrowser when YouTube is in dark mode.</div></div><input type="checkbox" class="switch" data-lite="ytLite.navyTheme"></label>
+      <label class="row"><div><div class="label">Hide comments</div></div><input type="checkbox" class="switch" data-lite="ytLite.hideComments"></label>
+      <label class="row"><div><div class="label">Hide recommended videos next to the player</div></div><input type="checkbox" class="switch" data-lite="ytLite.hideRelated"></label>
+      <label class="row"><div><div class="label">Hide the home page feed (focus mode)</div><div class="hint">Search for what you want instead of getting pulled in.</div></div><input type="checkbox" class="switch" data-lite="ytLite.hideHomeFeed"></label>
+      <label class="row"><div><div class="label">Hide end-screen cards</div></div><input type="checkbox" class="switch" data-lite="ytLite.hideEndCards"></label>
       <label class="row"><div><div class="label">Skip sponsors in YouTube videos</div><div class="hint">Uses SponsorBlock’s community list. CloudBrowser only sends a 4-letter scrap of a scrambled video ID, so it can’t tell what you watch.</div></div>
         <input type="checkbox" class="switch" id="sponsorBlock"></label>
       <div class="row" id="sbCatsRow"><div><div class="label">What to skip</div>
@@ -68,6 +82,12 @@
         <input type="checkbox" class="switch" id="hideShorts"></label>
       <label class="row"><div><div class="label">Picture-in-picture when you switch tabs</div><div class="hint">A playing YouTube video keeps going in a small floating window, and comes back when you return to its tab.</div></div>
         <input type="checkbox" class="switch" id="autoPip"></label>
+      <h3 class="sub">Roblox Lite</h3>
+      <label class="row"><div><div class="label">Roblox Lite</div><div class="hint">Your own Roblox website, with a “Roblox Lite” button in the address bar on roblox.com.</div></div>
+        <input type="checkbox" class="switch" data-lite="robloxLite.enabled"></label>
+      <label class="row"><div><div class="label">Server browser</div><div class="hint">A “Servers” button on every game page: see servers by ping and player count, join the best or smallest one, or copy a link to a server for friends.</div></div>
+        <input type="checkbox" class="switch" data-lite="robloxLite.serverBrowser"></label>
+      <label class="row"><div><div class="label">Navy theme</div><div class="hint">Matches CloudBrowser when Roblox is in dark mode.</div></div><input type="checkbox" class="switch" data-lite="robloxLite.navyTheme"></label>
     </section>
 
     <section id="vr">

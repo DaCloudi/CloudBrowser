@@ -132,3 +132,4 @@ section { border-color: var(--line); border-radius: 10px; }
 .list { border-color: var(--line); border-radius: 10px; }
 input.switch { background: #323b48; }
 input.switch:checked { background: var(--good); }
+h3.sub { margin: 22px 0 4px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }

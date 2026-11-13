@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('cloud', {
   toggleVertical: () => send('toggle-vertical'),
   shieldMenu: () => send('shield-menu'),
   translateMenu: () => send('translate-menu'),
+  liteMenu: () => send('lite-menu'),
   sidebarApp: id => send('sidebar-app', String(id)),
   sidebarAppMenu: id => send('sidebar-app-menu', String(id)),
   sidebarAddMenu: () => send('sidebar-add-menu'),

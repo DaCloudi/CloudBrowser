@@ -95,6 +95,11 @@ const DEFAULT_SETTINGS = {
   sidebarWidth: 440,
   siteZoom: {},                 // zoom you chose per site, remembered
   memorySaver: true,            // low on memory: put unused tabs to sleep sooner
+  ytLite: {                     // YouTube Lite (with sponsorBlock, hideShorts and autoPip above)
+    enabled: true, dislikes: true, quality: 'max', rememberSpeed: true, skipAds: true, navyTheme: true,
+    hideComments: false, hideRelated: false, hideHomeFeed: false, hideEndCards: true,
+  },
+  robloxLite: { enabled: true, serverBrowser: true, navyTheme: true },
   blockAutoplay: false,         // videos only start with sound after you click
   linkPreview: true,            // show where a link goes when you hover it
   discordLite: true,            // the Discord sidebar app runs Discord Lite (Vencord, plugins, logger, themes)
@@ -109,7 +114,7 @@ const DEFAULT_SETTINGS = {
   shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
   window: null,               // { width, height, maximized }
 };
-const INTERNAL_SETTINGS = new Set(['siteZoom', 'blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
+const INTERNAL_SETTINGS = new Set(['ytLite', 'robloxLite', 'siteZoom', 'blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
   'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn',
   'bitwardenSetupDone', 'alwaysTranslate', 'neverTranslate', 'sidebarApps', 'sponsorCategories']);
 
@@ -340,6 +345,7 @@ function tabInfo(t) {
     zoom: Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100),
     adblockOff: isAllowlisted(hostOf(url)),
     translatable: canTranslate(t),
+    lite: (() => { const a = liteAppFor(tabUrl(t)); return a ? LITE_OPTIONS[a].title : null; })(),
     translated: isTranslated(url),
   };
 }
@@ -3154,8 +3160,122 @@ ipcMain.on('yt-settings', (e) => {
   e.returnValue = settings ? {
     sponsorBlock: settings.data.sponsorBlock, categories: settings.data.sponsorCategories,
     hideShorts: settings.data.hideShorts,
+    lite: liteSettings('ytLite'),
   } : null;
 });
+ipcMain.on('rbx-settings', (e) => { e.returnValue = settings ? liteSettings('robloxLite') : null; });
+
+// ---------- YouTube Lite & Roblox Lite ----------
+
+const LITE_DEFAULTS = { ytLite: DEFAULT_SETTINGS.ytLite, robloxLite: DEFAULT_SETTINGS.robloxLite };
+function liteSettings(app) { return { ...LITE_DEFAULTS[app], ...(settings.data[app] || {}) }; }
+const LITE_OPTIONS = {
+  ytLite: {
+    title: 'YouTube Lite', host: /(^|\.)youtube\.com$/,
+    items: [
+      ['dislikes', 'Show dislike counts'], ['skipAds', 'Skip any ads that get through'], ['rememberSpeed', 'Remember my playback speed'],
+      ['navyTheme', 'Navy theme (in YouTube’s dark mode)'], null,
+      ['hideComments', 'Hide comments'], ['hideRelated', 'Hide recommended videos next to the player'], ['hideHomeFeed', 'Hide the home page feed (focus mode)'], ['hideEndCards', 'Hide end-screen cards'],
+    ],
+  },
+  robloxLite: {
+    title: 'Roblox Lite', host: /(^|\.)roblox\.com$/,
+    items: [['serverBrowser', 'Server browser on game pages'], ['navyTheme', 'Navy theme (in Roblox’s dark mode)']],
+  },
+};
+function setLite(app, key, value) {
+  if (!LITE_DEFAULTS[app] || !(key in LITE_DEFAULTS[app])) return false;
+  if (typeof value !== typeof LITE_DEFAULTS[app][key]) return false;
+  if (key === 'quality' && !['auto', '720', '1080', '1440', '2160', 'max'].includes(value)) return false;
+  settings.data[app] = { ...liteSettings(app), [key]: value };
+  settings.save();
+  // Pages pick the change up straight away.
+  const cfg = liteSettings(app);
+  for (const t of allTabs()) {
+    if (LITE_OPTIONS[app].host.test(hostOf(tabUrl(t)))) t.view.webContents.send('lite-settings', app, cfg);
+  }
+  sendStateAll();
+  return true;
+}
+function liteAppFor(url) {
+  const h = hostOf(url);
+  for (const app of Object.keys(LITE_OPTIONS)) if (LITE_OPTIONS[app].host.test(h) && liteSettings(app).enabled) return app;
+  return null;
+}
+function showLiteMenu(w) {
+  const t = activeTab(w);
+  const app = t && liteAppFor(tabUrl(t));
+  if (!app) return;
+  const o = LITE_OPTIONS[app], cfg = liteSettings(app);
+  const extra = app === 'ytLite' ? [
+    { label: 'Video quality', submenu: [['max', 'Always the best available'], ['2160', 'Up to 4K'], ['1440', 'Up to 1440p'], ['1080', 'Up to 1080p'], ['720', 'Up to 720p (saves data)'], ['auto', 'Let YouTube choose']]
+      .map(([v, l]) => ({ label: l, type: 'radio', checked: cfg.quality === v, click: () => setLite(app, 'quality', v) })) },
+    { label: 'Skip sponsors (SponsorBlock)', type: 'checkbox', checked: !!settings.data.sponsorBlock, click: () => setSetting('sponsorBlock', !settings.data.sponsorBlock) },
+    { label: 'Hide Shorts', type: 'checkbox', checked: !!settings.data.hideShorts, click: () => setSetting('hideShorts', !settings.data.hideShorts) },
+    { label: 'Picture-in-picture when I switch tabs', type: 'checkbox', checked: !!settings.data.autoPip, click: () => setSetting('autoPip', !settings.data.autoPip) },
+  ] : [];
+  Menu.buildFromTemplate([
+    { label: o.title, enabled: false },
+    { type: 'separator' },
+    ...extra,
+    ...o.items.map(it => it ? { label: it[1], type: 'checkbox', checked: !!cfg[it[0]], click: () => setLite(app, it[0], !cfg[it[0]]) } : { type: 'separator' }),
+    { type: 'separator' },
+    { label: 'Reload page to apply everything', click: () => t.view.webContents.reload() },
+    { label: `Turn off ${o.title}`, click: () => { setLite(app, 'enabled', false); t.view.webContents.reload(); } },
+    { label: 'More settings…', click: () => openInternal(w, 'settings', '#apps') },
+  ]).popup({ window: w.win });
+}
+uiOn('lite-menu', w => showLiteMenu(w));
+pageHandle('set-lite', (_ctx, app, key, value) => setLite(String(app), String(key), value));
+
+// Return YouTube Dislike: dislike counts (estimated from votes), fetched through CloudBrowser's own connection (the VPN if it's on).
+const rydCache = new Map();
+ipcMain.handle('yt-dislikes', async (e, videoId) => {
+  if (!liteSettings('ytLite').dislikes || !/^[\w-]{6,16}$/.test(String(videoId))) return null;
+  const hit = rydCache.get(videoId);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.v;
+  try {
+    const r = await e.sender.session.fetch(`https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(videoId)}`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const v = { likes: Number(j.likes) || 0, dislikes: Number(j.dislikes) || 0 };
+    rydCache.set(videoId, { at: Date.now(), v });
+    if (rydCache.size > 300) rydCache.delete(rydCache.keys().next().value);
+    return v;
+  } catch { return null; }
+});
+
+// Roblox Lite: join a particular server by opening the Roblox app (only when you click Join).
+ipcMain.on('rbx-join', (e, placeId, jobId) => {
+  const t = [...allTabs()].find(x => x.view.webContents === e.sender);
+  if (!t || !/(^|\.)roblox\.com$/.test(hostOf(tabUrl(t)))) return;
+  if (!/^\d{1,20}$/.test(String(placeId)) || (jobId && !/^[0-9a-f-]{36}$/i.test(String(jobId)))) return;
+  const url = `roblox://experiences/start?placeId=${placeId}` + (jobId ? `&gameInstanceId=${jobId}` : '');
+  log('Roblox Lite: joining', placeId, jobId || '(any server)');
+  if (SMOKE) { lastRobloxJoin = url; return; }
+  shell.openExternal(url).catch(err => toast(t.w, 'Couldn’t open Roblox: ' + err.message));
+});
+let lastRobloxJoin = null;
+// Public servers of a Roblox game (up to 300), with space to join.
+ipcMain.handle('rbx-servers', async (e, placeId) => {
+  if (!/^\d{1,20}$/.test(String(placeId))) return [];
+  const out = [];
+  let cursor = '';
+  for (let i = 0; i < 3; i++) {
+    const url = `https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Desc&excludeFullGames=true&limit=100${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`;
+    const r = await e.sender.session.fetch(url, { headers: { Accept: 'application/json' } }).catch(() => null);
+    if (!r || !r.ok) break;
+    const j = await r.json().catch(() => ({}));
+    for (const s of j.data || []) {
+      if (!s || typeof s.id !== 'string') continue;
+      out.push({ id: s.id, playing: Number(s.playing) || 0, maxPlayers: Number(s.maxPlayers) || 0, ping: Number(s.ping) || 0, fps: Number(s.fps) || 0 });
+    }
+    cursor = j.nextPageCursor;
+    if (!cursor) break;
+  }
+  return out.filter(s => s.maxPlayers > 0 && s.playing < s.maxPlayers);
+});
+ipcMain.on('rbx-toast', (e, text) => { const t = [...allTabs()].find(x => x.view.webContents === e.sender); if (t) toast(t.w, String(text).slice(0, 100)); });
 ipcMain.handle('ui:extensions', () => {
   if (!extensions) return [];
   const pinned = settings.data.pinnedExtensions || [];
@@ -3654,8 +3774,21 @@ async function smokeTest() {
   }
   const fakeYt = (title) => `<!doctype html><html><head><meta charset="utf-8"><title>${title} - YouTube</title></head>
     <body style="background:#0f0f0f;color:#fff;font:14px system-ui;margin:0">
-    <div class="html5-video-player" style="padding:16px"><video src="${videoFile}" controls style="width:640px;height:360px;background:#000"></video></div>
+    <div id="movie_player" class="html5-video-player" style="padding:16px"><video src="${videoFile}" controls style="width:640px;height:360px;background:#000"></video></div>
     <h2 style="padding:0 16px">${title}</h2>
+    <div id="top-level-buttons-computed" style="padding:0 16px"><button>Like</button><dislike-button-view-model><button style="color:#fff;background:#333;border:0;padding:6px 12px;border-radius:14px">Dislike</button></dislike-button-view-model></div>
+    <ytd-comments id="comments" style="display:block;padding:16px">Comments go here</ytd-comments>
+    <script>
+      // A stand-in for YouTube's player controls.
+      (() => {
+        const p = document.getElementById('movie_player');
+        window.__q = null; window.__rate = null;
+        p.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'large', 'medium', 'auto'];
+        p.getVideoData = () => ({ video_id: new URLSearchParams(location.search).get('v') });
+        p.setPlaybackQualityRange = (a) => { window.__q = a; };
+        p.setPlaybackRate = (r) => { window.__rate = r; document.querySelector('video').playbackRate = r; };
+      })();
+    </script>
     <div id="feed" style="display:flex;gap:12px;padding:16px">
       <ytd-rich-item-renderer style="display:block;width:150px;height:90px;background:#c33"><a href="/shorts/abcdefghijk">A Short</a></ytd-rich-item-renderer>
       <ytd-rich-item-renderer style="display:block;width:150px;height:90px;background:#36c"><a href="/watch?v=zzzzzzzzzzz">A normal video</a></ytd-rich-item-renderer>
@@ -3740,6 +3873,37 @@ async function smokeTest() {
     await wait(800);
     const shown = await ui(w, `document.getElementById('address').value`);
     S('address bar after in-page navigation:', shown, '| correct?', /v=NEXTvideo01/.test(shown), '| in history?', history.data.items[0] && history.data.items[0].url.includes('NEXTvideo01'));
+  });
+
+  await step('youtube lite', async () => {
+    if (!video || !videoFile) return;
+    const wc = t.view.webContents;
+    load(wc, 'https://www.youtube.com/watch?v=' + video.id);
+    await waitFor(() => !wc.isLoading(), 15000);
+    await wait(3500);
+    S('yt lite: address-bar button', await ui(w, `JSON.stringify({ shown: document.getElementById('lite-btn').classList.contains('show'), name: document.getElementById('lite-name').textContent })`));
+    S('yt lite: quality asked for', await jsIn(wc, `window.__q`), '| dislikes', await jsIn(wc, `(document.querySelector('.cloud-dislikes') || {}).textContent || 'none'`),
+      '| style', await jsIn(wc, `!!document.getElementById('cloud-yt-lite')`));
+    // Remembered speed: set 1.5×, open another video, it comes back at 1.5×.
+    await jsIn(wc, `(() => { const v = document.querySelector('video'); v.play().catch(() => {}); return 1; })()`);
+    await wait(1500);
+    await jsIn(wc, `(() => { document.querySelector('video').playbackRate = 1.5; return 1; })()`);
+    await wait(500);
+    load(wc, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await waitFor(() => !wc.isLoading(), 15000);
+    await wait(2500);
+    S('yt lite: speed remembered on the next video', await jsIn(wc, `window.__rate`));
+    // Hide comments, live from the Lite menu's setting.
+    setLite('ytLite', 'hideComments', true);
+    await wait(600);
+    S('yt lite: comments hidden', await jsIn(wc, `getComputedStyle(document.getElementById('comments')).display`));
+    await screen('youtube-lite');
+    setLite('ytLite', 'hideComments', false);
+    // An ad that got through is skipped.
+    await jsIn(wc, `(() => { const v = document.querySelector('video'); v.currentTime = 5; document.getElementById('movie_player').classList.add('ad-showing'); return 1; })()`);
+    await wait(1600);
+    S('yt lite: ad skipped to', await jsIn(wc, `(() => { const v = document.querySelector('video'); document.getElementById('movie_player').classList.remove('ad-showing'); return v.currentTime.toFixed(0) + ' of ' + v.duration.toFixed(0); })()`));
+    await jsIn(wc, `(() => { const v = document.querySelector('video'); v.muted = false; v.playbackRate = 1; v.pause(); return 1; })()`);
   });
 
   await step('shorts', async () => {
@@ -3876,6 +4040,24 @@ async function smokeTest() {
     if (reopened) reopened.win.close();
     await wait(800);
     void d1; void d2;
+  });
+
+  await step('roblox lite', async () => {
+    const rt = createTab(w, 'https://www.roblox.com/games/920587237/Adopt-Me');
+    const rwc = rt.view.webContents;
+    await waitFor(() => !rwc.isLoading(), 30000);
+    await wait(4000);
+    S('roblox lite: on', tabUrl(rt).slice(0, 60), '| address-bar button', await ui(w, `document.getElementById('lite-name').textContent`),
+      '| Servers button', await rwc.executeJavaScript(`!!document.getElementById('cloud-rbx-btn')`).catch(e => e.message));
+    await rwc.executeJavaScript(`document.getElementById('cloud-rbx-btn').click(); 1`).catch(() => {});
+    await waitFor(async () => (await rwc.executeJavaScript(`document.querySelectorAll('#cloud-rbx .srv').length`).catch(() => 0)) > 0, 20000);
+    await wait(800);
+    S('roblox lite: servers listed', await rwc.executeJavaScript(`document.querySelectorAll('#cloud-rbx .srv').length + ' | ' + document.querySelector('#cloud-rbx .muted').textContent + ' | first: ' + (document.querySelector('#cloud-rbx .srv') || {}).innerText`).catch(e => e.message));
+    await screen('roblox-lite');
+    await rwc.executeJavaScript(`[...document.querySelectorAll('#cloud-rbx button')].find(b => b.textContent === 'Join best server').click(); 1`).catch(() => {});
+    await wait(800);
+    S('roblox lite: join best server opens', lastRobloxJoin);
+    closeTab(rt.id);
   });
 
   await step('privacy report', async () => {

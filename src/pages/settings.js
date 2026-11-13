@@ -37,6 +37,11 @@ function fill(s) {
   $('hideShorts').checked = !!s.hideShorts;
   $('autoPip').checked = !!s.autoPip;
   $('linkPreview').checked = !!s.linkPreview;
+  for (const el of document.querySelectorAll('[data-lite]')) {
+    const [app, key] = el.dataset.lite.split('.');
+    const v = (s[app] || {})[key];
+    if (el.type === 'checkbox') el.checked = !!v; else if (v != null) el.value = String(v);
+  }
   $('memorySaver').checked = !!s.memorySaver;
   $('blockAutoplay').checked = !!s.blockAutoplay;
   $('discordLite').checked = !!s.discordLite;
@@ -117,6 +122,12 @@ async function renderPermissions() {
 }
 
 const set = (key, value) => cloud.call('set-setting', key, value);
+for (const el of document.querySelectorAll('[data-lite]')) {
+  el.addEventListener('change', () => {
+    const [app, key] = el.dataset.lite.split('.');
+    cloud.call('set-lite', app, key, el.type === 'checkbox' ? el.checked : el.value);
+  });
+}
 
 $('searchEngine').onchange = e => set('searchEngine', e.target.value);
 $('homePage').onchange = async e => { await set('homePage', e.target.value); load(); };
