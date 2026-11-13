@@ -3650,12 +3650,16 @@ async function smokeTest() {
     await wait(1500);
     // Point at a link: its address shows in the corner.
     const pt = await wc.executeJavaScript(`(() => { const a = [...document.querySelectorAll('a[href]')].find(x => { const r = x.getBoundingClientRect(); return r.top > 80 && r.bottom < innerHeight - 40 && r.width > 30 && r.height > 8 && /^https?:/.test(x.href); }); if (!a) return { x: 0, y: 0, href: 'none' }; const r = a.getBoundingClientRect(); return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2), href: a.href }; })()`).catch(e => ({ x: 0, y: 0, href: 'ERR ' + e.message }));
-    wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
-    await wait(800);
+    const cbx = w.win.getContentBounds(), vb = q.view.getBounds();
+    // Wiggle the real mouse onto the link (Windows only sends hover updates for real movement).
+    await powershell(MOUSE_PS + `for ($i = 0; $i -le 4; $i++) { [M]::SetCursorPos(${cbx.x + vb.x + pt.x} + $i, ${cbx.y + vb.y + pt.y}); Start-Sleep -m 60 }; 'ok'`);
+    await wait(500);
     const hb = w.hud && w.hud.getBounds();
     S('link preview: shown', !!(w.hud && w.hud.getVisible && w.hud.getVisible()), '| text', w.hud ? await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`) : '', '| for', pt.href, '| at', JSON.stringify(hb));
     await screen('link-preview');
-    wc.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
+    await powershell(MOUSE_PS + `[M]::SetCursorPos(${cbx.x + 400}, ${cbx.y + 20}); 'ok'`);
+    await wait(400);
+    S('link preview: hidden after moving off', !(w.hud && w.hud.getVisible()));
     // Mouse back button.
     load(wc, 'https://example.com/?utm_source=newsletter&utm_medium=email&id=7');
     await waitFor(() => !wc.isLoading(), 15000);
@@ -3668,7 +3672,7 @@ async function smokeTest() {
     // Copy clean link (Ctrl+Shift+C).
     handleShortcut(w, { type: 'keyDown', control: true, shift: true, key: 'C' });
     await wait(300);
-    S('copy clean link:', clipboard.readText(), '| toast', await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`));
+    S('copy clean link:', (() => { const x = clipboard.readText(); return typeof x + ':' + String(x); })(), '| toast', await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`));
     await screen('toast');
     S('link to highlight:', highlightLink('https://example.com/page#top', 'the quick brown fox'));
     // Per-site zoom is remembered.
@@ -3694,7 +3698,7 @@ async function smokeTest() {
     await screen('calculator');
     await ui(w, `(() => { const r = [...document.querySelectorAll('#suggestions .sg')].find(x => x.textContent.startsWith('= ')); r.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); })()`);
     await wait(600);
-    S('calculator: copied', clipboard.readText());
+    S('calculator: copied', (() => { const x = clipboard.readText(); return typeof x + ':' + String(x); })());
     // Auto-refresh.
     let loads = 0;
     const onLoad = () => loads++;
