@@ -90,7 +90,7 @@ def compat(rel, old, new, regex=False):
     if not p.exists():
         return
     s = p.read_text(encoding="utf-8")
-    s2 = re.sub(old, new, s) if regex else s.replace(old, new)
+    s2 = re.sub(old, new, s, flags=re.S) if regex else s.replace(old, new)
     if s2 != s:
         p.write_text(s2, encoding="utf-8")
         changes.append(f"build fix in {rel}: {old[:40]!r}")
@@ -99,6 +99,18 @@ def compat(rel, old, new, regex=False):
 compat("alvr/xtask/src/dependencies.rs", "ffmpeg-n7.1-latest-win64-gpl-shared-7.1", "ffmpeg-n8.1-latest-win64-gpl-shared-8.1")
 # FFmpeg 8 renamed these.
 compat("alvr/server_openvr/cpp/platform/win32/VideoEncoderSW.cpp", r"\bFF_PROFILE_H264_", "AV_PROFILE_H264_", regex=True)
+
+# Newer Cargo puts build scripts' OUT_DIR one level deeper, so "four folders up" no longer
+# reaches target/. Look for the folder named "target" instead.
+compat("alvr/filesystem/src/lib.rs",
+       r"pub fn target_dir\(\) -> PathBuf \{.*?\n\}",
+       'pub fn target_dir() -> PathBuf {\n'
+       '    let out = Path::new(env!("OUT_DIR"));\n'
+       '    out.ancestors()\n'
+       '        .find(|p| p.file_name().is_some_and(|n| n == "target"))\n'
+       '        .unwrap_or_else(|| out.parent().unwrap().parent().unwrap().parent().unwrap().parent().unwrap())\n'
+       '        .to_owned()\n'
+       '}', regex=True)
 
 # ---- Our own signing key, so updates install over the top ----
 out = SRC / "build/alvr_client_android"
