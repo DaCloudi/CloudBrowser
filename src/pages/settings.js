@@ -36,6 +36,8 @@ function fill(s) {
   $('sponsorBlock').checked = !!s.sponsorBlock;
   $('hideShorts').checked = !!s.hideShorts;
   $('autoPip').checked = !!s.autoPip;
+  $('linkPreview').checked = !!s.linkPreview;
+  $('blockAutoplay').checked = !!s.blockAutoplay;
   $('discordLite').checked = !!s.discordLite;
   $('dlRow').hidden = !s.discordLite;
   $('vrMode').value = s.vrMode;
@@ -161,7 +163,7 @@ for (const id of ['restoreTabs', 'showBookmarksBar', 'verticalTabs', 'adblock', 
   $(id).onchange = e => set(id, e.target.checked);
 }
 $('theme').onchange = e => set('theme', e.target.value);
-for (const id of ['sidebarAppsEnabled', 'sponsorBlock', 'hideShorts', 'autoPip']) {
+for (const id of ['sidebarAppsEnabled', 'sponsorBlock', 'hideShorts', 'autoPip', 'linkPreview', 'blockAutoplay']) {
   $(id).onchange = async e => { await set(id, e.target.checked); if (id === 'sponsorBlock') $('sbCatsRow').hidden = !e.target.checked; };
 }
 $('vrMode').onchange = e => set('vrMode', e.target.value);

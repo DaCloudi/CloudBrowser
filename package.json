@@ -17,7 +17,8 @@
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.3.9",
-    "uiohook-napi": "^1.5.4"
+    "uiohook-napi": "^1.5.4",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "electron": "https://github.com/castlabs/electron-releases#v45.2.1+wvcus",

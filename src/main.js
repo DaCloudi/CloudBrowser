@@ -93,6 +93,9 @@ const DEFAULT_SETTINGS = {
     { id: 'vrchat', title: 'VRChat', url: 'https://vrchat.com/home' },
   ],
   sidebarWidth: 440,
+  siteZoom: {},                 // zoom you chose per site, remembered
+  blockAutoplay: false,         // videos only start with sound after you click
+  linkPreview: true,            // show where a link goes when you hover it
   discordLite: true,            // the Discord sidebar app runs Discord Lite (Vencord, plugins, logger, themes)
   sponsorBlock: true,
   sponsorCategories: ['sponsor', 'selfpromo', 'interaction'],
@@ -105,7 +108,7 @@ const DEFAULT_SETTINGS = {
   shortcuts: [],                // [{ title, url }] when shortcutsMode is 'custom'
   window: null,               // { width, height, maximized }
 };
-const INTERNAL_SETTINGS = new Set(['blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
+const INTERNAL_SETTINGS = new Set(['siteZoom', 'blockedTotal', 'window', 'hiddenSites', 'homeVersion', 'shortcuts',
   'vpnEnabled', 'vpnMode', 'vpnCountry', 'vpnWgConfigName', 'adblockAllowlist', 'pinnedExtensions', 'incognitoVpn',
   'bitwardenSetupDone', 'alwaysTranslate', 'neverTranslate', 'sidebarApps', 'sponsorCategories']);
 
@@ -323,7 +326,7 @@ function tabInfo(t) {
     muted: wc.isAudioMuted(),
     bookmarked: isBookmarked(url),
     pinned: !!t.pinned,
-    groupId: t.groupId || null,
+    autoRefresh: t.autoRefresh ? t.autoRefresh.secs : 0,
     readerable: !!t.readerable,
     zoom: Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100),
     adblockOff: isAllowlisted(hostOf(url)),
@@ -368,7 +371,6 @@ function pushState(w) {
     vrActive,
     uiScale: settings.data.uiScale,
     split: splitInfo(w),
-    groups: [...w.groups.values()].map(g => ({ ...g, count: w.tabs.filter(t => t.groupId === g.id).length })),
     vpn: vpn ? vpn.info() : null,
     maximized: w.win.isMaximized(),
   });
@@ -417,6 +419,7 @@ function setOverlay(w, open) {
   else {
     for (const t of w.tabs) w.win.contentView.addChildView(t.view); // pages back on top
     for (const v of w.panelViews.values()) w.win.contentView.addChildView(v);
+    if (w.hud) w.win.contentView.addChildView(w.hud);
   }
   layout(w);
 }
@@ -429,7 +432,7 @@ function titleBarColors(incognito) {
 
 // ---------- windows ----------
 
-function createWindow({ incognito = false, urls, active = 0, groups = null } = {}) {
+function createWindow({ incognito = false, urls, active = 0 } = {}) {
   const saved = settings.data.window || {};
   const cur = currentWindow();
   const opts = {
@@ -452,7 +455,7 @@ function createWindow({ incognito = false, urls, active = 0, groups = null } = {
   }
   const w = {
     id: nextWinId++, incognito, tabs: [], activeId: null, closedTabs: [],
-    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), split: null, groups: restoreGroups(groups), overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
+    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), split: null, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
   windows.add(w);
@@ -486,8 +489,7 @@ function createWindow({ incognito = false, urls, active = 0, groups = null } = {
     list.forEach((u, i) => {
       const item = typeof u === 'string' ? { url: u } : u;
       // Only the visible tab loads now; the others load when first clicked (fast startup).
-      const tt = createTab(w, item.url, { activate: i === activeIdx, pinned: !!item.pinned, lazy: i !== activeIdx && list.length > 1, title: item.title, favicon: item.favicon });
-      if (item.group && w.groups.has(item.group) && tt && !tt.pinned) tt.groupId = item.group;
+      createTab(w, item.url, { activate: i === activeIdx, pinned: !!item.pinned, lazy: i !== activeIdx && list.length > 1, title: item.title, favicon: item.favicon });
     });
     layout(w);
     pushState(w);
@@ -507,8 +509,21 @@ function createWindow({ incognito = false, urls, active = 0, groups = null } = {
       if (!quitting && !othersNormal) { saveSession(true); sessionFrozen = true; }
     }
   });
+  w.win.on('app-command', (_e, cmd) => {
+    const wc = activeTab(w)?.view.webContents;
+    if (!wc) return;
+    if (cmd === 'browser-backward' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+    if (cmd === 'browser-forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+    if (cmd === 'browser-refresh') wc.reload();
+  });
   w.win.on('closed', () => {
-    for (const t of w.tabs) { try { t.view.webContents.close(); } catch {} }
+    // Remember it for "Reopen closed window" (Ctrl+Shift+T).
+    if (!w.incognito && !quitting && w.tabs.length) {
+      const tabs = w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned })).filter(x => x.url && !x.url.startsWith('data:'));
+      if (tabs.length) closedWindows.push({ tabs, at: Date.now() });
+      if (closedWindows.length > 5) closedWindows.shift();
+    }
+    for (const t of w.tabs) { clearAutoRefresh(t); try { t.view.webContents.close(); } catch {} }
     for (const [id, v] of w.panelViews) {
       // Discord keeps running (moves to another window) so its notifications keep coming.
       const other = id === discordAppId() && !quitting && [...windows].find(o => o !== w && !o.incognito);
@@ -516,6 +531,7 @@ function createWindow({ incognito = false, urls, active = 0, groups = null } = {
       try { v.webContents.close(); } catch {}
     }
     if (currentMedia && currentMedia.w === w) currentMedia = null;
+    try { if (w.hud) w.hud.webContents.close(); } catch {}
     try { w.ui.webContents.close(); } catch {}
     w.tabs = [];
     windows.delete(w);
@@ -545,6 +561,7 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
       contextIsolation: true,
       sandbox: true,
       spellcheck: true,
+      autoplayPolicy: settings.data.blockAutoplay ? 'document-user-activation-required' : 'no-user-gesture-required',
     },
   });
   view.setBackgroundColor(w.incognito ? '#1d1828' : '#07101b');
@@ -559,8 +576,6 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
     while (i < w.tabs.length && w.tabs[i].openerId === openerId) i++;
     tab.openerId = openerId;
     w.tabs.splice(i, 0, tab);
-    const opener = w.tabs[openerIdx];
-    if (opener && opener.groupId && w.groups.has(opener.groupId) && !pinned) tab.groupId = opener.groupId; // links stay in the group
   } else if (pinned) {
     w.tabs.splice(w.tabs.filter(t => t.pinned).length, 0, tab);
   } else {
@@ -602,6 +617,7 @@ function wireTab(tab) {
     update();
   });
   wc.on('did-navigate', (_e, url) => {
+    applySiteZoom(wc, url);
     tab.readerable = false;
     tab.pageLang = null;
     if (!url.startsWith('data:')) tab.failedUrl = null;
@@ -679,6 +695,7 @@ function wireTab(tab) {
   wc.on('will-redirect', (e) => stripOnNavigate(e, e.url, e.isMainFrame));
   wc.on('before-input-event', (event, input) => { if (handleShortcut(tab.w, input)) event.preventDefault(); });
   wc.on('context-menu', (_e, params) => showContextMenu(tab, params));
+  wc.on('update-target-url', (_e, url) => { if (isOnScreen(tab) && !tab.popped) showLinkPreview(tab.w, tab, url); });
   wc.on('found-in-page', (_e, r) => { if (tab.id === tab.w.activeId) uiSend(tab.w, 'find-result', { active: r.activeMatchOrdinal, matches: r.matches }); });
   wc.on('zoom-changed', (_e, dir) => zoom(wc, dir === 'in' ? 0.5 : -0.5));
   wc.on('enter-html-full-screen', () => { tab.w.htmlFullscreen = true; tab.w.win.setFullScreen(true); layout(tab.w); });
@@ -714,7 +731,6 @@ function switchTab(w, id) {
   }
   if (prevTab && prevTab.id !== id && isYouTube(tabUrl(t))) pipExit(t.view.webContents);
   w.activeId = id;
-  if (t.groupId && w.groups.get(t.groupId)?.collapsed) w.groups.get(t.groupId).collapsed = false;
   t.lastActive = Date.now();
   if (t.sleeping) wakeTab(t);
   layout(w); // shows this tab (and its split-view partner)
@@ -729,12 +745,13 @@ function closeTab(id) {
   if (!t) return;
   const w = t.w;
   if (w.split && (w.split.a === id || w.split.b === id)) w.split = null;
-  if (t.groupId) setTimeout(() => pruneGroups(w), 0);
+  clearAutoRefresh(t);
   const idx = w.tabs.indexOf(t);
   w.tabs.splice(idx, 1);
   const url = tabUrl(t);
   if (url && !url.startsWith('data:')) {
     w.closedTabs.push(url);
+    w.lastClosedTabAt = Date.now();
     if (w.closedTabs.length > 25) w.closedTabs.shift();
   }
   w.win.contentView.removeChildView(t.view);
@@ -772,6 +789,20 @@ function zoom(wc, delta) {
   if (!wc) return;
   const level = delta === 0 ? 0 : Math.max(-5, Math.min(5, wc.getZoomLevel() + delta));
   wc.setZoomLevel(level);
+  rememberZoom(wc, level);
+}
+// Zoom is remembered per site (not in incognito), like Chrome.
+function rememberZoom(wc, level) {
+  const host = hostOf(wc.getURL());
+  if (!host || wc.session === session.fromPartition(PRIVATE_PARTITION)) return;
+  if (level === 0) delete settings.data.siteZoom[host]; else settings.data.siteZoom[host] = level;
+  settings.save();
+}
+function applySiteZoom(wc, url) {
+  const host = hostOf(url);
+  if (!host) return;
+  const level = settings.data.siteZoom[host];
+  if (level != null && wc.getZoomLevel() !== level) wc.setZoomLevel(level);
 }
 
 function setFullscreen(w, on) {
@@ -902,9 +933,8 @@ function toggleBookmark(tab) {
 function saveSession(final = false) {
   if (!sessionStore || (quitting && !final) || (sessionFrozen && !final)) return;
   const wins = [...windows].filter(w => !w.incognito && w.tabs.length).map(w => ({
-    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned, group: t.groupId || undefined, title: (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle() || '', favicon: t.favicon || null }))
+    tabs: w.tabs.map(t => ({ url: tabUrl(t), pinned: !!t.pinned, title: (t.sleeping && t.sleepTitle) || t.view.webContents.getTitle() || '', favicon: t.favicon || null }))
       .filter(x => x.url && !x.url.startsWith('data:')),
-    groups: [...w.groups.values()],
     active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId)),
   })).filter(x => x.tabs.length);
   if (!wins.length && sessionFrozen) return;
@@ -920,7 +950,7 @@ function startWindows(startUrl) {
       const urls = [...x.tabs];
       let active = x.active;
       if (startUrl && i === wins.length - 1) { urls.push(startUrl); active = urls.length - 1; }
-      createWindow({ urls, active, groups: x.groups });
+      createWindow({ urls, active });
     });
   } else {
     createWindow({ urls: [startUrl || homeUrl()] });
@@ -980,7 +1010,17 @@ function setupDownloads(sess, isPrivate) {
       liveDownloads.delete(id);
       persistDownloads();
       notifyDownloads();
-      if (state === 'completed') uiSendAll('download-done', { filename: d.filename });
+      if (state === 'completed') {
+        uiSendAll('download-done', { filename: d.filename });
+        // Not looking at CloudBrowser? Tell Windows.
+        if (!BaseWindow.getFocusedWindow() && !item.getURL().startsWith('blob:') && Notification.isSupported()) {
+          try {
+            const n = new Notification({ title: 'Download complete', body: d.filename || 'Your download finished', icon: path.join(__dirname, 'ui', 'icon.png') });
+            n.on('click', () => { if (d.path) shell.showItemInFolder(d.path); });
+            n.show();
+          } catch {}
+        }
+      }
     });
     persistDownloads();
     notifyDownloads();
@@ -1828,180 +1868,149 @@ pageHandle('forget-site', async (_ctx, host) => {
   return { cookies, history: before - history.data.items.length };
 });
 
-// ---------- command bar (Ctrl+K) ----------
-// Everything you can do, searchable: actions live here so the bar always matches what's possible.
+// ---------- small everyday helpers ----------
 
-function paletteActions(w) {
+// A little layer above the pages for the link preview (bottom-left) and short messages (bottom-centre).
+function hud(w) {
+  if (w.hud && !w.hud.webContents.isDestroyed()) return w.hud;
+  const v = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, javascript: true } });
+  v.setBackgroundColor('#00000000');
+  v.setVisible(false);
+  const css = `html,body{margin:0;background:transparent;overflow:hidden;font:12.5px "Segoe UI",system-ui,sans-serif}
+    #b{position:fixed;left:0;bottom:0;max-width:100%;box-sizing:border-box;padding:4px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      background:#0c1624;color:#e8edf3;border:1px solid #323b48;border-radius:0 7px 0 0}
+    #b.toast{left:50%;transform:translateX(-50%);bottom:4px;border-radius:9px;padding:8px 16px;background:#fff;color:#07101b;font-weight:600;border:0;box-shadow:0 4px 16px rgba(0,0,0,.35)}`;
+  v.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><style>${css}</style><div id="b"></div>`));
+  w.hud = v;
+  w.win.contentView.addChildView(v);
+  return v;
+}
+function hudShow(w, text, mode, anchor) {
+  const v = hud(w);
+  const { width, height } = w.win.getContentBounds();
+  const isToast = mode === 'toast';
+  const est = Math.min(isToast ? 420 : Math.max(120, (anchor ? anchor.width : width) * 0.6), 24 + text.length * (isToast ? 7.6 : 6.6));
+  const h = isToast ? 46 : 24;
+  const x = isToast ? Math.round((anchor ? anchor.x + anchor.width / 2 : width / 2) - est / 2) : (anchor ? anchor.x : w.pageX);
+  const y = (anchor ? anchor.y + anchor.height : height) - h;
+  v.setBounds({ x: Math.max(0, x), y: Math.max(0, y), width: Math.round(est), height: h });
+  v.webContents.executeJavaScript(`(() => { const b = document.getElementById('b'); b.className = ${JSON.stringify(isToast ? 'toast' : '')}; b.textContent = ${JSON.stringify(text)}; })()`).catch(() => {});
+  w.win.contentView.addChildView(v); // on top
+  v.setVisible(true);
+}
+function hudHide(w) { if (w.hud && !w.hud.webContents.isDestroyed()) w.hud.setVisible(false); }
+
+let linkPreviewTimer = null;
+function showLinkPreview(w, tab, url) {
+  if (!settings.data.linkPreview || w.toastUntil > Date.now()) return;
+  clearTimeout(linkPreviewTimer);
+  if (!url) { linkPreviewTimer = setTimeout(() => hudHide(w), 120); return; }
+  let text = url;
+  try { text = decodeURI(url); } catch {}
+  text = text.replace(/^https:\/\//, '').replace(/^(mailto|tel):/, '$1: ');
+  hudShow(w, text, 'link', tab.view.getBounds());
+}
+function toast(w, text) {
+  if (!w || !w.win || w.win.isDestroyed()) return;
+  w.toastUntil = Date.now() + 2000;
   const t = activeTab(w);
-  const wc = t && t.view.webContents;
-  const url = t ? tabUrl(t) : '';
-  const web = /^https?:/.test(url);
-  const id = discordAppId();
-  const list = [
-    ['new-tab', 'New tab', 'Ctrl+T', () => { createTab(w); focusAddress(w); }],
-    ['new-window', 'New window', 'Ctrl+N', () => newWindow(false)],
-    ['new-incognito', 'New incognito window', 'Ctrl+Shift+N', () => newWindow(true)],
-    ['reopen', 'Reopen closed tab', 'Ctrl+Shift+T', () => reopenClosedTab(w), w.closedTabs.length > 0],
-    ['close-tab', 'Close this tab', 'Ctrl+W', () => t && closeTab(t.id), !!t],
-    ['close-others', 'Close other tabs', '', () => w.tabs.filter(x => x.id !== t.id && !x.pinned).map(x => x.id).forEach(closeTab), w.tabs.length > 1],
-    ['duplicate', 'Duplicate tab', '', () => createTab(w, url, { openerId: t.id }), !!t],
-    ['pin', t && t.pinned ? 'Unpin tab' : 'Pin tab', '', () => togglePin(t), !!t],
-    ['mute', wc && wc.isAudioMuted() ? 'Unmute this tab' : 'Mute this tab', '', () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); }, !!wc],
-    ['mute-all', 'Mute all other tabs', '', () => { for (const x of allTabs()) if (x !== t) x.view.webContents.setAudioMuted(true); sendStateAll(); }],
-    ['sleep-others', 'Put other tabs to sleep', '', () => { for (const x of w.tabs) if (!isOnScreen(x)) sleepTab(x, true); }],
-    ['group', t && t.groupId ? 'Remove tab from its group' : 'Add tab to a new group', 'Ctrl+Shift+G', () => (t.groupId ? ungroupTabs(w, [t.id]) : newGroup(w, [t.id])), !!t && !t.pinned],
-    ['split', splitShowing(w) ? 'Close split view' : 'Split view (two tabs side by side)', 'Ctrl+Shift+E', () => toggleSplit(w), !!t],
-    ['pop-out', 'Pop out tab (floating, always on top)', '', () => popOutTab(t), !!t],
-    ['reload', 'Reload page', 'Ctrl+R', () => wc.reload(), !!wc],
-    ['bookmark', isBookmarked(url) ? 'Remove bookmark' : 'Bookmark this page', 'Ctrl+D', () => toggleBookmark(t), web],
-    ['reader', 'Reader view', 'F9', () => openReader(t), !!(t && t.readerable)],
-    ['translate', 'Translate this page', '', () => translateTab(t), web],
-    ['screenshot', 'Take a screenshot', 'Ctrl+Shift+S', () => screenshot(w), !!wc],
-    ['find', 'Find on page', 'Ctrl+F', () => { uiSend(w, 'find-open'); w.ui.webContents.focus(); }, !!wc],
-    ['print', 'Print', 'Ctrl+P', () => wc.print(), !!wc],
-    ['zoom-reset', 'Reset zoom', 'Ctrl+0', () => zoom(wc, 0), !!wc],
-    ['adblock-site', web && isAllowlisted(hostOf(url)) ? `Turn ad blocking back on for ${hostOf(url)}` : `Allow ads on ${hostOf(url) || 'this site'}`, '', () => toggleAllowlist(hostOf(url)), web],
-    ['vpn', settings.data.vpnEnabled ? 'Turn VPN off' : 'Turn VPN on', '', () => vpn && vpn.setEnabled(!settings.data.vpnEnabled), !!vpn],
-    ['vpn-new-ip', 'VPN: get a new IP address', '', () => vpn && vpn.restart(), !!vpn && settings.data.vpnEnabled],
-    ['discord', 'Open Discord', 'Ctrl+Shift+D', () => togglePanel(w, id), !!id && !w.incognito],
-    ['discord-window', 'Discord in its own window', '', () => popOutDiscord(w), !!id && !w.incognito && !discordPop],
-    ['discord-settings', 'Discord Lite settings', '', () => openInternal(w, 'discord-settings'), !!discordLite && settings.data.discordLite],
-    ['discord-log', 'Discord message log', '', () => openInternal(w, 'discord-log'), !!discordLite && settings.data.discordLite],
-    ['bitwarden', 'Open Bitwarden', 'Ctrl+Shift+L', () => openBitwarden(w), !w.incognito],
-    ['vertical', settings.data.verticalTabs ? 'Turn off vertical tabs' : 'Turn on vertical tabs', '', () => setSetting('verticalTabs', !settings.data.verticalTabs)],
-    ['bookmarks-bar', settings.data.showBookmarksBar ? 'Hide bookmarks bar' : 'Show bookmarks bar', 'Ctrl+Shift+B', () => setSetting('showBookmarksBar', !settings.data.showBookmarksBar)],
-    ['privacy-report', 'Privacy report', '', () => openInternal(w, 'privacy')],
-    ['history', 'History', 'Ctrl+H', () => openInternal(w, 'history')],
-    ['downloads', 'Downloads', 'Ctrl+J', () => openInternal(w, 'downloads')],
-    ['bookmarks', 'Bookmarks', 'Ctrl+Shift+O', () => openInternal(w, 'bookmarks')],
-    ['extensions', 'Extensions', '', () => openInternal(w, 'extensions')],
-    ['settings', 'Settings', 'Ctrl+,', () => openInternal(w, 'settings')],
-    ['clear-data', 'Clear browsing data', 'Ctrl+Shift+Del', () => openInternal(w, 'settings', '#privacy')],
-    ['devtools', 'Developer tools', 'F12', () => wc.toggleDevTools(), !!wc],
-    ['fullscreen', 'Full screen', 'F11', () => setFullscreen(w, !w.win.isFullScreen())],
-    ['check-update', 'Check for updates', '', () => checkForUpdates(true)],
-  ];
-  const settingsPages = [
-    ['Default browser', '#default'], ['Passwords (Bitwarden)', '#passwords'], ['VPN settings', '#vpn'], ['Search engine', '#search'],
-    ['Sidebar apps & YouTube', '#apps'], ['VR settings & interface size', '#vr'], ['On start-up & sleeping tabs', '#startup'],
-    ['Privacy & security settings', '#privacy'], ['About CloudBrowser', '#about'],
-  ].map(([label, hash]) => ['settings' + hash, label, 'Settings', () => openInternal(w, 'settings', hash)]);
-  return [...list, ...settingsPages].filter(a => a[4] !== false);
+  hudShow(w, text, 'toast', t ? t.view.getBounds() : null);
+  clearTimeout(w.toastTimer);
+  w.toastTimer = setTimeout(() => { w.toastUntil = 0; hudHide(w); }, 2000);
 }
-ipcMain.handle('ui:palette', (e) => {
-  const w = [...windows].find(x => x.ui.webContents === e.sender);
-  if (!w) return null;
-  const tabs = [...windows].filter(o => o.incognito === w.incognito).flatMap(o => o.tabs.map(t => {
-    const i = tabInfo(t);
-    const g = t.groupId && o.groups.get(t.groupId);
-    return { id: t.id, title: i.title, url: i.url, favicon: i.favicon, active: o === w && t.id === w.activeId, group: g ? g.name || 'Group' : '', otherWindow: o !== w };
-  }));
-  return {
-    tabs,
-    actions: paletteActions(w).map(a => ({ id: a[0], label: a[1], keys: a[2] })),
-    bookmarks: bookmarks.data.items.slice(0, 500).map(b => ({ title: b.title, url: b.url, favicon: b.favicon })),
-    history: w.incognito ? [] : history.data.items.slice(0, 400).map(h => ({ title: h.title, url: h.url })),
-  };
-});
-uiOn('palette-run', (w, id) => {
-  const a = paletteActions(w).find(x => x[0] === id);
-  if (a) { try { a[3](); } catch (e) { log('palette action failed', id, e.message); } }
-});
 
-// ---------- tab groups ----------
+function copyCleanLink(w, url) {
+  clipboard.writeText(cleanUrl(url));
+  toast(w, cleanUrl(url) !== url ? 'Link copied (tracking removed)' : 'Link copied');
+}
+// A link that scrolls to and highlights the selected text (works in Chrome, Edge and CloudBrowser).
+function highlightLink(url, text) {
+  const base = url.split('#')[0];
+  const words = text.trim().split(/\s+/);
+  const enc = s => encodeURIComponent(s).replace(/-/g, '%2D');
+  const frag = words.length > 10 ? `${enc(words.slice(0, 4).join(' '))},${enc(words.slice(-4).join(' '))}` : enc(words.join(' '));
+  return `${base}#:~:text=${frag}`;
+}
 
-const GROUP_COLOURS = {
-  grey: { name: 'Grey', hex: '#8a96a6' }, blue: { name: 'Blue', hex: '#4d8dff' }, red: { name: 'Red', hex: '#f0565b' },
-  yellow: { name: 'Yellow', hex: '#f4c542' }, green: { name: 'Green', hex: '#3ba55d' }, pink: { name: 'Pink', hex: '#f06bb4' },
-  purple: { name: 'Purple', hex: '#a774ff' }, cyan: { name: 'Cyan', hex: '#33c8d8' }, orange: { name: 'Orange', hex: '#ff8f3d' },
-};
-let groupSeq = 0;
-function restoreGroups(list) {
-  const m = new Map();
-  for (const g of Array.isArray(list) ? list : []) {
-    if (!g || typeof g.id !== 'string') continue;
-    m.set(g.id, { id: g.id, name: String(g.name || '').slice(0, 40), color: GROUP_COLOURS[g.color] ? g.color : 'blue', collapsed: !!g.collapsed });
-  }
-  return m;
+async function showQr(w, url) {
+  try {
+    const QR = require('qrcode');
+    const dataUrl = await QR.toDataURL(url, { margin: 1, width: 360, errorCorrectionLevel: 'M', color: { dark: '#07101bff', light: '#ffffffff' } });
+    uiSend(w, 'qr', { dataUrl, url });
+    w.ui.webContents.focus();
+  } catch (e) { log('QR failed', e.message); toast(w, 'Couldn’t make a QR code for this page'); }
 }
-function groupColour(w) {
-  const used = new Set([...w.groups.values()].map(g => g.color));
-  return Object.keys(GROUP_COLOURS).find(c => c !== 'grey' && !used.has(c)) || 'blue';
-}
-// Keep each group's tabs side by side (in the order of its first tab) and drop empty groups.
-function tidyGroups(w) {
-  const order = [];
-  const seenGroups = new Set();
-  for (const t of w.tabs) {
-    if (!t.groupId || !w.groups.has(t.groupId)) { t.groupId = t.groupId && w.groups.has(t.groupId) ? t.groupId : null; if (!t.groupId) { order.push(t); continue; } }
-    if (seenGroups.has(t.groupId)) continue;
-    seenGroups.add(t.groupId);
-    order.push(...w.tabs.filter(x => x.groupId === t.groupId));
-  }
-  w.tabs = order;
-  pruneGroups(w, false);
-}
-function pruneGroups(w, send = true) {
-  let changed = false;
-  for (const id of [...w.groups.keys()]) if (!w.tabs.some(t => t.groupId === id)) { w.groups.delete(id); changed = true; }
-  if (changed && send) { sendState(w); saveSession(); }
-}
-function newGroup(w, tabIds, name = '') {
-  const id = 'g' + Date.now().toString(36) + (groupSeq++);
-  w.groups.set(id, { id, name, color: groupColour(w), collapsed: false });
-  addToGroup(w, tabIds, id);
-  if (!name) uiSend(w, 'group-rename', id); // type a name straight away
-  return id;
-}
-function addToGroup(w, tabIds, gid) {
-  const g = w.groups.get(gid);
-  if (!g) return;
-  for (const id of tabIds) { const t = w.tabs.find(x => x.id === id); if (t && !t.pinned) t.groupId = gid; }
-  g.collapsed = false;
-  tidyGroups(w);
-  sendState(w); saveSession();
-}
-function ungroupTabs(w, tabIds) {
-  for (const id of tabIds) { const t = w.tabs.find(x => x.id === id); if (t) t.groupId = null; }
-  // Ungrouped tabs move just after their old group so they don't split it.
-  tidyGroups(w);
-  sendState(w); saveSession();
-}
-function setGroupCollapsed(w, gid, collapsed) {
-  const g = w.groups.get(gid);
-  if (!g) return;
-  g.collapsed = collapsed;
+
+// Right-click Back / Forward: the tab's history, like Chrome.
+function showNavMenu(w, dir) {
   const t = activeTab(w);
-  if (collapsed && t && t.groupId === gid) {
-    // The page you're on is folding away: go to the nearest tab outside the group.
-    const idx = w.tabs.indexOf(t);
-    const outside = [...w.tabs.slice(idx + 1), ...w.tabs.slice(0, idx).reverse()].find(x => x.groupId !== gid && !(x.groupId && w.groups.get(x.groupId)?.collapsed));
-    if (outside) switchTab(w, outside.id);
-    else { const nt = createTab(w, homeUrl()); nt.groupId = null; }
-  }
-  sendState(w); saveSession();
-}
-function showGroupMenu(w, gid) {
-  const g = w.groups.get(gid);
-  if (!g) return;
-  const tabs = w.tabs.filter(t => t.groupId === gid);
+  if (!t) return;
+  const h = t.view.webContents.navigationHistory;
+  const entries = h.getAllEntries();
+  const cur = h.getActiveIndex();
+  const idxs = dir === 'back' ? [...Array(cur).keys()].reverse() : [...Array(Math.max(0, entries.length - cur - 1)).keys()].map(i => cur + 1 + i);
+  if (!idxs.length) return;
   Menu.buildFromTemplate([
-    { label: g.name || 'Unnamed group', enabled: false },
+    ...idxs.slice(0, 15).map(i => ({ label: (entries[i].title || entries[i].url).slice(0, 70), click: () => h.goToIndex(i) })),
     { type: 'separator' },
-    { label: 'Rename', click: () => uiSend(w, 'group-rename', gid) },
-    { label: 'Colour', submenu: Object.entries(GROUP_COLOURS).map(([c, x]) => ({ label: x.name, type: 'radio', checked: g.color === c, click: () => { g.color = c; sendState(w); saveSession(); } })) },
-    { label: g.collapsed ? 'Expand' : 'Collapse', click: () => setGroupCollapsed(w, gid, !g.collapsed) },
-    { type: 'separator' },
-    { label: 'New tab in group', click: () => { const nt = createTab(w, homeUrl(), { openerId: tabs[tabs.length - 1]?.id }); addToGroup(w, [nt.id], gid); } },
-    { label: 'Move group to new window', click: () => {
-      const items = tabs.map(t => ({ url: tabUrl(t), group: gid }));
-      const saved = { ...g, collapsed: false };
-      tabs.forEach(t => closeTab(t.id));
-      createWindow({ incognito: w.incognito, urls: items, groups: [saved] });
-    } },
-    { label: 'Ungroup', click: () => { ungroupTabs(w, tabs.map(t => t.id)); w.groups.delete(gid); sendState(w); } },
-    { label: `Close group (${tabs.length} tab${tabs.length === 1 ? '' : 's'})`, click: () => tabs.forEach(t => closeTab(t.id)) },
+    { label: 'Show full history', accelerator: 'Ctrl+H', click: () => openInternal(w, 'history') },
   ]).popup({ window: w.win });
+}
+
+// Right-click Reload: hard reload and auto-refresh.
+function showReloadMenu(w) {
+  const t = activeTab(w);
+  if (!t) return;
+  const wc = t.view.webContents;
+  Menu.buildFromTemplate([
+    { label: 'Reload', accelerator: 'F5', click: () => wc.reload() },
+    { label: 'Hard reload (skip the cache)', accelerator: 'Ctrl+Shift+R', click: () => wc.reloadIgnoringCache() },
+    { label: 'Empty cache and hard reload', click: async () => { await wc.session.clearCache(); wc.reloadIgnoringCache(); } },
+    { type: 'separator' },
+    autoRefreshMenu(t),
+  ]).popup({ window: w.win });
+}
+
+// Auto-refresh a tab every so often (handy for scores, drops, stock pages).
+const REFRESH_CHOICES = [[0, 'Off'], [15, 'Every 15 seconds'], [30, 'Every 30 seconds'], [60, 'Every minute'], [300, 'Every 5 minutes'], [900, 'Every 15 minutes'], [1800, 'Every 30 minutes']];
+function autoRefreshMenu(t) {
+  const cur = t.autoRefresh ? t.autoRefresh.secs : 0;
+  return { label: cur ? `Auto-refresh (${REFRESH_CHOICES.find(c => c[0] === cur)[1].toLowerCase()})` : 'Auto-refresh', submenu: REFRESH_CHOICES.map(([secs, label]) => ({
+    label, type: 'radio', checked: cur === secs, click: () => setAutoRefresh(t, secs),
+  })) };
+}
+function setAutoRefresh(t, secs) {
+  clearAutoRefresh(t);
+  if (secs) {
+    t.autoRefresh = { secs, timer: setInterval(() => {
+      const wc = t.view.webContents;
+      if (wc.isDestroyed()) return clearAutoRefresh(t);
+      if (t.sleeping || wc.isLoading()) return;
+      wc.reload();
+    }, secs * 1000) };
+    toast(t.w, `This tab refreshes ${REFRESH_CHOICES.find(c => c[0] === secs)[1].toLowerCase()}`);
+  }
+  sendState(t.w);
+}
+function clearAutoRefresh(t) { if (t && t.autoRefresh) { clearInterval(t.autoRefresh.timer); t.autoRefresh = null; } }
+
+function duplicateTabs(w) {
+  const seen = new Set();
+  const dup = [];
+  // Keep the active one (and pinned ones) when there are copies.
+  const order = [...w.tabs].sort((a, b) => (b.id === w.activeId) - (a.id === w.activeId) || (b.pinned - a.pinned));
+  for (const t of order) {
+    const u = tabUrl(t).split('#')[0];
+    if (!u || u.startsWith(NEWTAB_URL)) continue;
+    if (seen.has(u)) dup.push(t); else seen.add(u);
+  }
+  return dup;
+}
+
+const closedWindows = [];
+function reopenClosedWindow() {
+  const x = closedWindows.pop();
+  if (x && x.tabs.length) createWindow({ urls: x.tabs, active: 0 });
 }
 
 // ---------- split view: two tabs side by side ----------
@@ -2596,7 +2605,13 @@ function handleShortcut(w, input) {
   const wc = t && t.view.webContents;
 
   if (ctrl && !shift && key === 't') { createTab(w); focusAddress(w); return true; }
-  if (ctrl && shift && key === 't') { reopenClosedTab(w); return true; }
+  if (ctrl && shift && key === 't') {
+    // Whatever you closed last: a tab in this window, or a whole window.
+    const lastWin = closedWindows[closedWindows.length - 1];
+    if (lastWin && (!w.closedTabs.length || lastWin.at > (w.lastClosedTabAt || 0))) reopenClosedWindow(); else reopenClosedTab(w);
+    return true;
+  }
+  if (ctrl && shift && key === 'c' && t && /^https?:/.test(tabUrl(t))) { copyCleanLink(w, tabUrl(t)); return true; }
   if (ctrl && !shift && key === 'n') { newWindow(false); return true; }
   if (ctrl && shift && key === 'n') { newWindow(true); return true; }
   if (ctrl && (key === 'w' || key === 'f4')) { if (t) closeTab(t.id); return true; }
@@ -2626,8 +2641,6 @@ function handleShortcut(w, input) {
   if (ctrl && shift && key === 's') { screenshot(w); return true; }
   if (ctrl && shift && key === 'l') { openBitwarden(w); return true; }
   if (ctrl && shift && key === 'e') { toggleSplit(w); return true; }
-  if (ctrl && !shift && key === 'k') { uiSend(w, 'palette-open'); w.ui.webContents.focus(); return true; }
-  if (ctrl && shift && key === 'g') { if (t && !t.pinned) { if (t.groupId) setGroupCollapsed(w, t.groupId, true); else newGroup(w, [t.id]); } return true; }
   if (ctrl && shift && key === 'd') { const id = discordAppId(); if (id && !w.incognito) togglePanel(w, id); return true; }
   if (input.alt && key === 'arrowleft') { wc && wc.navigationHistory.goBack(); return true; }
   if (input.alt && key === 'arrowright') { wc && wc.navigationHistory.goForward(); return true; }
@@ -2671,6 +2684,7 @@ function showContextMenu(tab, p) {
       if (!w.incognito) t.push({ label: 'Open link in incognito window', click: () => openInIncognito(p.linkURL) });
     }
     t.push({ label: 'Copy link address', click: () => clipboard.writeText(p.linkURL) });
+    if (/^https?:/.test(p.linkURL) && cleanUrl(p.linkURL) !== p.linkURL) t.push({ label: 'Copy clean link (no tracking)', click: () => copyCleanLink(w, p.linkURL) });
     if (isHttp) t.push({ label: 'Save link as…', click: () => wc.downloadURL(p.linkURL) });
     sep();
   }
@@ -2700,6 +2714,7 @@ function showContextMenu(tab, p) {
     const s = p.selectionText.trim().replace(/\s+/g, ' ');
     const short = s.length > 32 ? s.slice(0, 32) + '…' : s;
     t.push({ role: 'copy' });
+    if (/^https?:/.test(tabUrl(tab))) t.push({ label: 'Copy link to highlight', click: () => { clipboard.writeText(highlightLink(tabUrl(tab), s)); toast(w, 'Link to highlight copied'); } });
     t.push({ label: `Search ${engine().name} for “${short}”`, click: () => createTab(w, searchUrl(s), { openerId: tab.id }) });
     sep();
   }
@@ -2712,6 +2727,7 @@ function showContextMenu(tab, p) {
     t.push({ label: 'Save page as…', click: () => savePage(w, wc) });
     t.push({ label: 'Print…', click: () => wc.print() });
     t.push({ label: 'Take screenshot', click: () => screenshot(w) });
+    if (/^https?:/.test(tabUrl(tab))) t.push({ label: 'Send to your phone (QR code)', click: () => showQr(w, tabUrl(tab)) });
     if (tab.readerable) t.push({ label: 'Open in reader mode', click: () => openReader(tab) });
     if (/^https:/.test(tabUrl(tab))) t.push(isTranslated(tabUrl(tab))
       ? { label: 'Show original (untranslated)', click: () => load(wc, originalUrl(tabUrl(tab))) }
@@ -2807,17 +2823,9 @@ function showTabMenu(w, id) {
     }]),
     { label: 'Pop out (floating, always on top)', click: () => popOutTab(t) },
     ...(settings.data.sidebarAppsEnabled && !w.incognito && /^https?:/.test(tabUrl(t)) ? [{ label: 'Add to sidebar', click: () => addSidebarApp(t.view.webContents.getTitle() || hostOf(tabUrl(t)), tabUrl(t)) }] : []),
-    ...(t.pinned ? [] : t.groupId ? [
-      { label: 'Remove from group', click: () => ungroupTabs(w, [t.id]) },
-    ] : [{
-      label: 'Add to group', submenu: [
-        { label: 'New group', click: () => newGroup(w, [t.id]) },
-        ...(w.groups.size ? [{ type: 'separator' }] : []),
-        ...[...w.groups.values()].map(g => ({ label: g.name || GROUP_COLOURS[g.color].name + ' group', click: () => addToGroup(w, [t.id], g.id) })),
-      ],
-    }]),
-    { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => { if (!t.pinned) t.groupId = null; togglePin(t); pruneGroups(w); } },
+    { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => togglePin(t) },
     { label: 'Put tab to sleep', enabled: !isOnScreen(t) && !t.sleeping, click: () => sleepTab(t, true) },
+    autoRefreshMenu(t),
     { label: 'Move to new window', enabled: w.tabs.length > 1, click: () => { const u = tabUrl(t); closeTab(id); createWindow({ incognito: w.incognito, urls: [u] }); } },
     { label: wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); } },
     { label: isBookmarked(tabUrl(t)) ? 'Remove bookmark' : 'Bookmark tab', click: () => toggleBookmark(t) },
@@ -2825,7 +2833,9 @@ function showTabMenu(w, id) {
     { label: 'Close tab', click: () => closeTab(id) },
     { label: 'Close other tabs', enabled: w.tabs.length > 1, click: () => w.tabs.filter(x => x.id !== id).map(x => x.id).forEach(closeTab) },
     { label: 'Close tabs to the right', enabled: idx < w.tabs.length - 1, click: () => w.tabs.slice(idx + 1).map(x => x.id).forEach(closeTab) },
+    { label: 'Close duplicate tabs', enabled: duplicateTabs(w).length > 0, click: () => { const d = duplicateTabs(w); d.forEach(x => closeTab(x.id)); toast(w, `Closed ${d.length} duplicate tab${d.length === 1 ? '' : 's'}`); } },
     { label: 'Reopen closed tab', enabled: w.closedTabs.length > 0, click: () => reopenClosedTab(w) },
+    { label: 'Reopen closed window', enabled: closedWindows.length > 0, click: () => reopenClosedWindow() },
   ]).popup({ window: w.win });
 }
 
@@ -3000,11 +3010,9 @@ uiOn('shield-menu', w => showShieldMenu(w));
 uiOn('translate-menu', w => showTranslateMenu(w));
 uiOn('sidebar-app', (w, id) => togglePanel(w, id));
 uiOn('split-toggle', w => toggleSplit(w));
-uiOn('group-toggle', (w, gid) => { const g = w.groups.get(gid); if (g) setGroupCollapsed(w, gid, !g.collapsed); });
-uiOn('group-menu', (w, gid) => showGroupMenu(w, gid));
-uiOn('group-rename', (w, gid, name) => { const g = w.groups.get(gid); if (g) { g.name = String(name || '').trim().slice(0, 40); sendState(w); saveSession(); } });
-uiOn('group-add', (w, tabId, gid) => addToGroup(w, [tabId], gid));
-uiOn('group-new', w => { const t = activeTab(w); if (t && !t.pinned) newGroup(w, [t.id]); });
+uiOn('nav-menu', (w, dir) => showNavMenu(w, dir));
+uiOn('reload-menu', w => showReloadMenu(w));
+uiOn('toast', (w, text) => toast(w, String(text).slice(0, 120)));
 uiOn('split-ratio', (w, r) => { r = Number(r); if (w.split && r >= 0.15 && r <= 0.85) { w.split.ratio = r; layout(w); sendState(w); } });
 uiOn('split-menu', w => {
   if (!w.split) return;
@@ -3027,7 +3035,7 @@ uiOn('pin-extension', (_w, id) => {
 uiOn('manage-extensions', w => openInternal(w, 'extensions'));
 uiOn('open-web-store', w => createTab(normalWindow(), 'https://chromewebstore.google.com/category/extensions'));
 uiOn('reader', w => { const t = activeTab(w); if (t) openReader(t); });
-uiOn('reset-zoom', w => { const wc = activeTab(w)?.view.webContents; if (wc) { wc.setZoomLevel(0); sendState(w); } });
+uiOn('reset-zoom', w => { const wc = activeTab(w)?.view.webContents; if (wc) { wc.setZoomLevel(0); rememberZoom(wc, 0); sendState(w); } });
 uiOn('focus-tab', (_w, id) => { const t = getTab(id); if (t) { switchTab(t.w, t.id); t.w.win.focus(); } });
 uiOn('move-tab', (w, id, toIndex) => {
   const t = w.tabs.find(x => x.id === id);
@@ -3038,13 +3046,6 @@ uiOn('move-tab', (w, id, toIndex) => {
   let to = Math.max(0, Math.min(w.tabs.length, Number(toIndex) || 0));
   to = t.pinned ? Math.min(to, pinnedCount) : Math.max(to, pinnedCount); // pinned tabs stay first
   w.tabs.splice(to, 0, t);
-  // Dropped between two tabs of a group: join it. Dropped outside its group: leave it.
-  const before = w.tabs[to - 1], after = w.tabs[to + 1];
-  if (!t.pinned) {
-    if (before && after && before.groupId && before.groupId === after.groupId) t.groupId = before.groupId;
-    else if (t.groupId && !(before && before.groupId === t.groupId) && !(after && after.groupId === t.groupId)) t.groupId = null;
-  }
-  pruneGroups(w);
   sendState(w);
   saveSession();
 });
@@ -3059,6 +3060,8 @@ uiOn('address-menu', (w, hasSelection) => {
     { role: 'selectAll' },
     { type: 'separator' },
     { label: 'Copy page link', enabled: !!t && /^(https?|file):/.test(tabUrl(t)), click: () => clipboard.writeText(tabUrl(t)) },
+    { label: 'Copy clean link (no tracking)', accelerator: 'Ctrl+Shift+C', enabled: !!t && /^https?:/.test(tabUrl(t)), click: () => copyCleanLink(w, tabUrl(t)) },
+    { label: 'Send to your phone (QR code)', enabled: !!t && /^https?:/.test(tabUrl(t)), click: () => showQr(w, tabUrl(t)) },
   ]).popup({ window: w.win });
 });
 uiOn('vpn-toggle', () => { if (vpn) vpn.setEnabled(!settings.data.vpnEnabled); });
@@ -3639,74 +3642,91 @@ async function smokeTest() {
     S('vr: off again', !vrActive, 'page rect', w.pageX, w.pageY);
   });
 
-  await step('tab groups', async () => {
-    const a = activeTab(w);
-    load(a.view.webContents, 'https://www.roblox.com/');
-    const b = createTab(w, 'https://example.org/');
-    const c = createTab(w, 'https://en.wikipedia.org/wiki/Cloud');
-    await wait(3000);
-    switchTab(w, a.id);
-    const gid = newGroup(w, [a.id]);
-    await wait(900);
-    S('groups: rename box open', await ui(w, `!!document.querySelector('.group-chip.renaming .gname-input')`));
-    await ui(w, `(() => { const i = document.querySelector('.gname-input'); i.value = 'Roblox'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+  await step('quality of life', async () => {
+    const q = activeTab(w);
+    const wc = q.view.webContents;
+    load(wc, 'https://en.wikipedia.org/wiki/Cloud');
+    await waitFor(() => !wc.isLoading(), 20000);
+    await wait(1500);
+    // Point at a link: its address shows in the corner.
+    const pt = await wc.executeJavaScript(`(() => { const a = [...document.querySelectorAll('#mw-content-text a[href^="/wiki/"]')].find(x => x.getBoundingClientRect().top > 150 && x.getBoundingClientRect().width > 30); const r = a.getBoundingClientRect(); return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2), href: a.href }; })()`);
+    wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+    await wait(800);
+    const hb = w.hud && w.hud.getBounds();
+    S('link preview: shown', !!(w.hud && w.hud.getVisible && w.hud.getVisible()), '| text', w.hud ? await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`) : '', '| for', pt.href, '| at', JSON.stringify(hb));
+    await screen('link-preview');
+    wc.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
+    // Mouse back button.
+    load(wc, 'https://example.com/?utm_source=newsletter&utm_medium=email&id=7');
+    await waitFor(() => !wc.isLoading(), 15000);
     await wait(500);
-    addToGroup(w, [c.id], gid);
-    const child = createTab(w, 'https://example.com/', { openerId: a.id, activate: false });
-    await wait(800);
-    const g = w.groups.get(gid);
-    S('groups: name', g && g.name, '| colour', g && g.color, '| members', w.tabs.filter(t => t.groupId === gid).length,
-      '| link from grouped tab joined', child.groupId === gid, '| kept together', JSON.stringify(w.tabs.map(t => t.groupId ? 'G' : '-').join('')));
-    await screen('tab-groups');
-    // Collapse it from the chip: the active tab was in it, so CloudBrowser moves to one outside.
-    await ui(w, `document.querySelector('.group-chip').click()`);
-    await wait(700);
-    S('groups: collapsed', w.groups.get(gid).collapsed, '| hidden tabs', await ui(w, `document.querySelectorAll('.tab.group-hidden').length`), '| active outside group', activeTab(w).groupId !== gid);
-    await screen('tab-groups-collapsed');
-    switchTab(w, a.id);
-    await wait(400);
-    S('groups: switching into it expands', !w.groups.get(gid).collapsed);
-    saveSession();
-    S('groups: saved with session', JSON.stringify((sessionStore.data.windows[0] || {}).groups));
-    ungroupTabs(w, w.tabs.filter(t => t.groupId === gid).map(t => t.id));
-    S('groups: ungrouped, group gone', !w.groups.has(gid));
-    [b, child].forEach(t => closeTab(t.id));
-    switchTab(w, c.id);
-  });
-
-  await step('command bar', async () => {
-    uiSend(w, 'palette-open');
-    w.ui.webContents.focus();
-    await wait(1200);
-    const type = async (q) => { await ui(w, `(() => { const i = document.getElementById('pl-q'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`); await wait(400); };
-    S('palette: open', await ui(w, `!document.getElementById('palette').hidden`), '| rows with nothing typed', await ui(w, `document.querySelectorAll('.pl-row').length`));
-    await type('spl');
-    S('palette: "spl" →', await ui(w, `[...document.querySelectorAll('.pl-row .pl-label')].slice(0, 3).map(x => x.textContent).join(' | ')`));
-    await type('privacy');
-    await screen('command-bar');
-    S('palette: "privacy" →', await ui(w, `[...document.querySelectorAll('.pl-row .pl-label')].slice(0, 4).map(x => x.textContent).join(' | ')`));
-    // Jump to a tab by typing part of its title.
-    const target = createTab(w, 'https://example.org/', { activate: false });
+    w.win.emit('app-command', {}, 'browser-backward');
     await wait(2500);
-    const back = w.tabs.find(x => x.id !== target.id);
-    switchTab(w, back.id);
-    uiSend(w, 'palette-open');
+    S('mouse back button: back on', tabUrl(q).slice(0, 45));
+    w.win.emit('app-command', {}, 'browser-forward');
+    await wait(2500);
+    // Copy clean link (Ctrl+Shift+C).
+    handleShortcut(w, { type: 'keyDown', control: true, shift: true, key: 'C' });
+    await wait(300);
+    S('copy clean link:', clipboard.readText(), '| toast', await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`));
+    await screen('toast');
+    S('link to highlight:', highlightLink('https://example.com/page#top', 'the quick brown fox'));
+    // Per-site zoom is remembered.
+    zoom(wc, 1);
+    load(wc, 'https://example.org/');
+    await waitFor(() => !wc.isLoading(), 15000);
+    load(wc, 'https://example.com/');
+    await waitFor(() => !wc.isLoading(), 15000);
+    await wait(500);
+    S('site zoom: back on example.com, zoom level', wc.getZoomLevel(), '| saved', JSON.stringify(settings.data.siteZoom));
+    zoom(wc, 0);
+    // QR code.
+    await showQr(w, 'https://en.wikipedia.org/wiki/Cloud');
+    await wait(900);
+    S('qr: panel', await ui(w, `JSON.stringify({ shown: !document.getElementById('qr-panel').hidden, img: document.getElementById('qr-img').naturalWidth, url: document.getElementById('qr-url').textContent })`));
+    await screen('qr-code');
+    await ui(w, `closeQr()`);
+    // Calculator in the address bar.
+    w.ui.webContents.focus();
+    await ui(w, `(() => { const a = document.getElementById('address'); a.focus(); a.value = '(12*7+3)/3'; a.dispatchEvent(new Event('input')); })()`);
+    await wait(1200);
+    S('calculator: suggestions', await ui(w, `[...document.querySelectorAll('#suggestions .sg .t')].slice(0, 3).map(x => x.textContent).join(' | ')`));
+    await screen('calculator');
+    await ui(w, `(() => { const r = [...document.querySelectorAll('#suggestions .sg')].find(x => x.textContent.startsWith('= ')); r.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); })()`);
+    await wait(600);
+    S('calculator: copied', clipboard.readText());
+    // Auto-refresh.
+    let loads = 0;
+    const onLoad = () => loads++;
+    wc.on('did-finish-load', onLoad);
+    setAutoRefresh(q, 15);
+    await wait(500);
+    S('auto-refresh: tab icon', await ui(w, `!!document.querySelector('.tab.active .autorefresh')`));
+    await wait(16500);
+    setAutoRefresh(q, 0);
+    wc.removeListener('did-finish-load', onLoad);
+    S('auto-refresh: reloads in 17 s', loads);
+    // Duplicates.
+    const d1 = createTab(w, 'https://example.com/', { activate: false });
+    const d2 = createTab(w, 'https://example.com/#x', { activate: false });
+    await wait(1500);
+    S('duplicates found', duplicateTabs(w).length);
+    duplicateTabs(w).forEach(x => closeTab(x.id));
+    S('duplicates left', duplicateTabs(w).length, '| tabs', w.tabs.length);
+    // Reopen a closed window.
+    const before = windows.size;
+    newWindow(false);
+    await wait(2500);
+    const nw = [...windows].find(o => o !== w && !o.incognito);
+    if (nw) { load(nw.tabs[0].view.webContents, 'https://example.net/'); await wait(2500); nw.win.close(); await wait(1200); }
+    S('closed window remembered', closedWindows.length);
+    handleShortcut(w, { type: 'keyDown', control: true, shift: true, key: 'T' });
+    await wait(2500);
+    const reopened = [...windows].find(o => o !== w && !o.incognito);
+    S('reopen closed window: windows', before, '→', windows.size, '| tab', reopened && tabUrl(reopened.tabs[0]));
+    if (reopened) reopened.win.close();
     await wait(800);
-    await type('example.org');
-    S('palette: rows for example.org', await ui(w, `[...document.querySelectorAll('.pl-row')].slice(0, 4).map(r => r.innerText.replace(/\\n/g, ' / ')).join(' || ')`), '| tabs', JSON.stringify(w.tabs.map(x => tabUrl(x))));
-    await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
-    await wait(800);
-    S('palette: Enter switched to the tab', tabUrl(activeTab(w)).includes('example.org'), '| now on', tabUrl(activeTab(w)), '| closed', await ui(w, `document.getElementById('palette').hidden`));
-    // Run an action from it.
-    uiSend(w, 'palette-open');
-    await wait(800);
-    await type('vertical tabs');
-    await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
-    await wait(800);
-    S('palette: action ran (vertical tabs on)', settings.data.verticalTabs);
-    await screen('vertical-after-palette');
-    setSetting('verticalTabs', false);
-    closeTab(target.id);
+    void d1; void d2;
   });
 
   await step('privacy report', async () => {

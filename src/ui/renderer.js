@@ -8,6 +8,8 @@ let lastActiveId = null;
 
 const ICONS = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  calc: '<svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h1M12 12h0M15.5 12h0M8.5 16h1M12 16h0M15.5 16h0"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.05-4.95M19 4.5V8h-3.5"/></svg>',
   globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>',
   star: '<svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
@@ -42,7 +44,9 @@ $('downloads').onclick = () => cloud.openInternal('downloads');
 $('reload').onclick = () => { const t = activeTab(); t && t.loading ? cloud.stop() : cloud.reload(); };
 for (const id of ['back', 'forward']) {
   $(id).addEventListener('auxclick', e => { if (e.button === 1) cloud[id](); });
+  $(id).addEventListener('contextmenu', e => { e.preventDefault(); cloud.navMenu(id); }); // right-click: this tab's history
 }
+$('reload').addEventListener('contextmenu', e => { e.preventDefault(); cloud.reloadMenu(); });
 
 $('vertical-toggle').onclick = () => cloud.toggleVertical();
 $('side-newtab').onclick = () => cloud.newTab();
@@ -251,6 +255,9 @@ async function updateSuggestions() {
   rows = [];
   if (looksLikeUrl(typed)) rows.push({ icon: 'globe', title: typed, sub: '', text: typed });
   rows.push({ icon: 'search', title: typed, sub: `${engine} search`, text: typed, search: true });
+  // The answer to a sum shows right under it (Enter still searches; pick this row to copy it).
+  const calc = /^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/.test(typed) ? null : calculate(typed);
+  if (calc != null) rows.splice(1, 0, { icon: 'calc', title: `= ${calc.toLocaleString(undefined, { maximumFractionDigits: 10 })}`, sub: 'Click to copy', calc: String(calc) });
   for (const it of items) {
     if (it.type === 'tab') { rows.push({ icon: 'tab', title: it.title || it.url, sub: 'Switch to this tab', url: it.url, tabId: it.tabId }); continue; }
     rows.push({ icon: it.type === 'bookmark' ? 'star' : 'clock', title: it.title || it.url, sub: it.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''), url: it.url });
@@ -262,6 +269,12 @@ async function updateSuggestions() {
 }
 
 function go(row, newTab) {
+  if (row && row.calc) {
+    navigator.clipboard.writeText(row.calc).catch(() => {});
+    closeOverlay(); editing = false; address.blur(); render();
+    cloud.toast(`Copied ${row.calc}`);
+    return;
+  }
   const target = row ? (row.url || row.text) : address.value;
   closeOverlay();
   if (row && row.tabId && !newTab) { editing = false; address.blur(); cloud.focusTab(row.tabId); return; }
@@ -293,7 +306,7 @@ address.addEventListener('keydown', e => {
 });
 $('backdrop').addEventListener('mousedown', e => {
   e.preventDefault();
-  if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); closeMediaPanel(); closePalette(); return; }
+  if (document.body.classList.contains('panel')) { closeVpnPanel(); closeExtPanel(); closeMediaPanel(); closeQr(); return; }
   closeOverlay(); editing = false; address.blur(); render(); cloud.focusPage();
 });
 
@@ -434,74 +447,11 @@ function siteKind(url) {
 // Tabs are kept and updated in place (not rebuilt on every change), so the strip stays smooth
 // even while a page is loading or the ad blocker is busy.
 const tabEls = new Map(); // id -> { el, key }
-const chipEls = new Map(); // group id -> { el, key }
-const GROUP_HEX = { grey: '#8a96a6', blue: '#4d8dff', red: '#f0565b', yellow: '#f4c542', green: '#3ba55d', pink: '#f06bb4', purple: '#a774ff', cyan: '#33c8d8', orange: '#ff8f3d' };
-function groupById(id) { return (state.groups || []).find(g => g.id === id); }
-
-function buildChip(g) {
-  const el = document.createElement('div');
-  el.className = 'group-chip';
-  el.dataset.group = g.id;
-  el.onmousedown = e => { if (e.button === 0 && !el.classList.contains('renaming')) e.preventDefault(); };
-  el.onclick = () => { if (!el.classList.contains('renaming')) cloud.groupToggle(el.dataset.group); };
-  el.oncontextmenu = e => { e.preventDefault(); cloud.groupMenu(el.dataset.group); };
-  el.ondblclick = e => { e.stopPropagation(); startGroupRename(el.dataset.group); };
-  el.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('text/x-tab')) { e.preventDefault(); el.classList.add('drop-into'); } });
-  el.addEventListener('dragleave', () => el.classList.remove('drop-into'));
-  el.addEventListener('drop', e => {
-    e.preventDefault(); el.classList.remove('drop-into');
-    const id = Number(e.dataTransfer.getData('text/x-tab'));
-    if (id) cloud.groupAdd(id, el.dataset.group);
-  });
-  return el;
-}
-function fillChip(el, g) {
-  el.style.setProperty('--gc', GROUP_HEX[g.color] || '#4d8dff');
-  el.classList.toggle('collapsed', !!g.collapsed);
-  el.classList.toggle('unnamed', !g.name);
-  el.title = `${g.name || 'Unnamed group'} · ${g.count} tab${g.count === 1 ? '' : 's'}\nClick to ${g.collapsed ? 'expand' : 'collapse'} · double-click to rename · right-click for more`;
-  const name = document.createElement('span');
-  name.className = 'gname';
-  name.textContent = g.name || '';
-  const parts = [name];
-  if (g.collapsed) { const c = document.createElement('span'); c.className = 'gcount'; c.textContent = g.count; parts.push(c); }
-  el.replaceChildren(...parts);
-}
-function startGroupRename(id) {
-  const ge = chipEls.get(id);
-  const g = groupById(id);
-  if (!ge || !g) return;
-  const el = ge.el;
-  el.classList.add('renaming');
-  const input = document.createElement('input');
-  input.className = 'gname-input';
-  input.value = g.name || '';
-  input.placeholder = 'Name this group';
-  input.maxLength = 40;
-  el.replaceChildren(input);
-  let done = false;
-  const finish = (save) => {
-    if (done) return; done = true;
-    el.classList.remove('renaming');
-    if (save) cloud.groupRename(id, input.value);
-    ge.key = '';
-    cloud.setOverlay(false);
-    if (!save) fillChip(el, g);
-  };
-  input.onkeydown = e => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); e.stopPropagation(); };
-  input.onblur = () => finish(true);
-  input.onmousedown = e => e.stopPropagation();
-  input.onclick = e => e.stopPropagation();
-  cloud.setOverlay(true); // so the toolbar gets the keyboard
-  setTimeout(() => { input.focus(); input.select(); }, 30);
-}
-cloud.onGroupRename(id => setTimeout(() => startGroupRename(id), 60));
 let tabsLayoutKey = '';
 
 function splitSide(id) { const sp = state.split; return sp ? (sp.a === id ? 'L' : sp.b === id ? 'R' : '') : ''; }
 function tabKey(t, vertical, narrow) {
-  const g = t.groupId && groupById(t.groupId);
-  return [t.title, t.favicon, t.loading, t.private, t.audible, t.muted, t.pinned, t.sleeping, t.id === state.activeId, splitSide(t.id), g ? g.color : '', vertical, narrow].join('|');
+  return [t.title, t.favicon, t.loading, t.private, t.audible, t.muted, t.pinned, t.sleeping, t.id === state.activeId, splitSide(t.id), t.autoRefresh, vertical, narrow].join('|');
 }
 
 function buildTab(t, vertical, narrow) {
@@ -544,8 +494,6 @@ function fillTab(el, t, vertical, narrow) {
   el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow && !t.pinned ? ' narrow' : '')
     + (t.pinned ? ' pinned' : '') + (t.sleeping ? ' sleeping' : '')
     + (splitSide(t.id) ? ' in-split split-' + splitSide(t.id) + (state.split.showing ? ' split-shown' : '') : '');
-  const grp = t.groupId && groupById(t.groupId);
-  if (grp) { el.classList.add('grouped'); el.style.setProperty('--gc', GROUP_HEX[grp.color] || '#4d8dff'); } else el.style.removeProperty('--gc');
   el.title = t.title + (t.pinned ? ' (pinned)' : '') + (t.sleeping ? ' (sleeping: click to wake)' : '');
 
   let icon;
@@ -566,6 +514,7 @@ function fillTab(el, t, vertical, narrow) {
   title.textContent = t.title;
   const parts = [icon, title];
   if (t.pinned) { const p = document.createElement('span'); p.className = 'pin'; p.innerHTML = ICONS.pin; parts.push(p); }
+  if (t.autoRefresh) { const r = document.createElement('span'); r.className = 'autorefresh'; r.title = `Refreshes every ${t.autoRefresh < 60 ? t.autoRefresh + ' seconds' : t.autoRefresh / 60 + ' min'}`; r.innerHTML = ICONS.refresh; parts.push(r); }
   if (t.audible || t.muted) {
     const a = document.createElement('button');
     a.className = 'audio';
@@ -595,31 +544,16 @@ function renderTabs() {
   const layoutKey = `${vertical}`;
   if (layoutKey !== tabsLayoutKey) { tabsLayoutKey = layoutKey; tabEls.clear(); other.replaceChildren(); strip.replaceChildren(); }
 
-  const seen = new Set(), seenGroups = new Set();
-  let i = 0, prevGroup = null;
-  const place = (el) => { if (strip.children[i] !== el) strip.insertBefore(el, strip.children[i] || null); i++; };
-  state.tabs.forEach((t) => {
-    // A group's chip goes in front of its first tab.
-    const g = t.groupId && groupById(t.groupId);
-    if (g && t.groupId !== prevGroup) {
-      seenGroups.add(g.id);
-      const gkey = [g.name, g.color, g.collapsed, g.count, vertical].join('|');
-      let ge = chipEls.get(g.id);
-      if (!ge) { ge = { el: buildChip(g), key: '' }; chipEls.set(g.id, ge); }
-      if (ge.key !== gkey && !ge.el.classList.contains('renaming')) { fillChip(ge.el, g); ge.key = gkey; }
-      place(ge.el);
-    }
-    prevGroup = g ? t.groupId : null;
+  const seen = new Set();
+  state.tabs.forEach((t, i) => {
     seen.add(t.id);
     const key = tabKey(t, vertical, narrow);
     let entry = tabEls.get(t.id);
     if (!entry) { entry = { el: buildTab(t, vertical, narrow), key }; tabEls.set(t.id, entry); }
     else if (entry.key !== key) { fillTab(entry.el, t, vertical, narrow); entry.key = key; }
-    entry.el.classList.toggle('group-hidden', !!(g && g.collapsed));
-    place(entry.el);
+    if (strip.children[i] !== entry.el) strip.insertBefore(entry.el, strip.children[i] || null);
   });
   for (const [id, entry] of tabEls) if (!seen.has(id)) { entry.el.remove(); tabEls.delete(id); }
-  for (const [id, entry] of chipEls) if (!seenGroups.has(id)) { entry.el.remove(); chipEls.delete(id); }
   if (vertical) { const a = strip.querySelector('.tab.active'); if (a) a.scrollIntoView({ block: 'nearest' }); }
 }
 
@@ -794,136 +728,57 @@ function renderRail() {
 }
 $('rail-add').onclick = () => cloud.sidebarAddMenu();
 
-// ---------- command bar (Ctrl+K) ----------
+// ---------- calculator in the address bar ----------
+// Type a sum like 12*7+3, (4+5)^2 or 15% of 80 and the answer shows as the first suggestion.
 
-const PL_ICONS = {
-  tab: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9h17"/></svg>',
-  action: '<svg viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></svg>',
-  settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>',
-  bookmark: '<svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z"/></svg>',
-  history: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/></svg>',
-  go: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>',
-  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
-};
-let plData = null, plRows = [], plSel = 0, plLoading = null;
-function plScore(text, words) {
-  const t = text.toLowerCase();
-  let score = 0;
-  for (const w of words) {
-    const i = t.indexOf(w);
-    if (i < 0) return -1;
-    score += i === 0 ? 30 : /[\s/.\-·:]/.test(t[i - 1]) ? 18 : 6;
-  }
-  return score;
-}
-function plResults(q) {
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const d = plData || { tabs: [], actions: [], bookmarks: [], history: [] };
-  const out = [];
-  const add = (kind, item, label, sub, boost, run) => {
-    const s = words.length ? plScore(label + ' ' + (sub || ''), words) : 0;
-    if (s >= 0) out.push({ kind, item, label, sub, score: s + boost, run });
+function calculate(text) {
+  let src = text.replace(/\s+/g, '').replace(/×|x(?=[\d(.])/gi, '*').replace(/÷/g, '/').replace(/,/g, '');
+  const pct = /^([\d.]+)%of([\d.]+)$/i.exec(src);
+  if (pct) return tidy(Number(pct[1]) / 100 * Number(pct[2]));
+  if (!/^[\d.+\-*/^%()]+$/.test(src) || !/\d/.test(src) || !/[+\-*/^%]/.test(src.replace(/^-/, ''))) return null;
+  let i = 0;
+  const peek = () => src[i];
+  const num = () => {
+    if (peek() === '(') { i++; const v = add(); if (peek() !== ')') throw 0; i++; return v; }
+    if (peek() === '-') { i++; return -factor(); }
+    const m = /^\d*\.?\d+(e[+-]?\d+)?|^\d+\./i.exec(src.slice(i));
+    if (!m) throw 0;
+    i += m[0].length;
+    let v = Number(m[0]);
+    if (peek() === '%') { i++; v /= 100; }
+    return v;
   };
-  if (!words.length) {
-    // Nothing typed yet: your other tabs, then the handiest actions.
-    d.tabs.filter(t => !t.active).slice(0, 8).forEach(t => add('tab', t, t.title, t.url, 0, () => cloud.focusTab(t.id)));
-    ['split', 'group', 'discord', 'screenshot', 'privacy-report', 'vpn', 'reopen'].forEach(id => {
-      const a = d.actions.find(x => x.id === id);
-      if (a) add(a.id.startsWith('settings') ? 'settings' : 'action', a, a.label, a.keys, 0, () => cloud.paletteRun(a.id));
-    });
-    return out;
-  }
-  const seen = new Set();
-  d.tabs.forEach(t => { seen.add(t.url); add('tab', t, t.title, (t.group ? t.group + ' · ' : '') + t.url, t.active ? 0 : 40, () => cloud.focusTab(t.id)); });
-  d.actions.forEach(a => add(a.id.startsWith('settings') ? 'settings' : 'action', a, a.label, a.keys, 30, () => cloud.paletteRun(a.id)));
-  d.bookmarks.forEach(b => { if (!seen.has(b.url)) { seen.add(b.url); add('bookmark', b, b.title || b.url, b.url, 20, nt => cloud.navigate(b.url, nt)); } });
-  d.history.forEach(h => { if (!seen.has(h.url)) { seen.add(h.url); add('history', h, h.title || h.url, h.url, 0, nt => cloud.navigate(h.url, nt)); } });
-  out.sort((a, b) => b.score - a.score);
-  const top = out.slice(0, 40);
-  const looksLikeUrl = /^[^\s]+\.[a-z]{2,}(\/|$)|^https?:\/\//i.test(q.trim());
-  top.push(looksLikeUrl
-    ? { kind: 'go', label: `Go to ${q.trim()}`, sub: '', run: nt => cloud.navigate(q.trim(), nt) }
-    : { kind: 'search', label: `Search for “${q.trim()}”`, sub: '', run: nt => cloud.search(q.trim(), nt) });
-  return top;
+  const factor = () => { const b = num(); if (peek() === '^') { i++; return Math.pow(b, factor()); } return b; };
+  const mul = () => { let v = factor(); while (peek() === '*' || peek() === '/') { const op = src[i++]; const r = factor(); v = op === '*' ? v * r : v / r; } return v; };
+  const add = () => { let v = mul(); while (peek() === '+' || peek() === '-') { const op = src[i++]; const r = mul(); v = op === '+' ? v + r : v - r; } return v; };
+  try {
+    const v = add();
+    if (i !== src.length || !Number.isFinite(v)) return null;
+    return tidy(v);
+  } catch { return null; }
 }
-const PL_KIND = { tab: 'Switch to tab', action: 'Action', settings: 'Settings', bookmark: 'Bookmark', history: 'History', go: '', search: '' };
-function renderPalette() {
-  const q = $('pl-q').value;
-  plRows = plResults(q);
-  plSel = Math.min(plSel, Math.max(0, plRows.length - 1));
-  const words = q.trim();
-  $('pl-list').replaceChildren(...plRows.map((r, i) => {
-    const row = document.createElement('div');
-    row.className = 'pl-row' + (i === plSel ? ' sel' : '');
-    let icon;
-    if ((r.kind === 'tab' || r.kind === 'bookmark') && r.item && r.item.favicon) {
-      icon = document.createElement('img'); icon.className = 'pl-fav'; icon.src = r.item.favicon;
-      icon.onerror = () => { const s = document.createElement('span'); s.className = 'pl-ic'; s.innerHTML = PL_ICONS[r.kind]; icon.replaceWith(s); };
-    } else { icon = document.createElement('span'); icon.className = 'pl-ic'; icon.innerHTML = PL_ICONS[r.kind] || PL_ICONS.action; }
-    const text = document.createElement('div'); text.className = 'pl-text';
-    const l = highlight(r.label || '', words.split(/\s+/)[0] || ''); l.className = 'pl-label';
-    text.append(l);
-    if (r.sub && r.kind !== 'action' && r.kind !== 'settings') { const s = document.createElement('span'); s.className = 'pl-sub'; s.textContent = r.sub; text.append(s); }
-    const right = document.createElement('span'); right.className = 'pl-kind';
-    right.textContent = (r.kind === 'action' || r.kind === 'settings') && r.sub ? r.sub : PL_KIND[r.kind];
-    if (r.kind === 'tab' && r.item.otherWindow) right.textContent = 'Other window';
-    row.append(icon, text, right);
-    row.onmousemove = () => { if (plSel !== i) { plSel = i; markPaletteSel(); } };
-    row.onmousedown = e => { e.preventDefault(); runPalette(i, e.shiftKey); };
-    return row;
-  }));
-}
-function markPaletteSel() {
-  [...$('pl-list').children].forEach((r, i) => r.classList.toggle('sel', i === plSel));
-  const el = $('pl-list').children[plSel];
-  if (el) el.scrollIntoView({ block: 'nearest' });
-}
-function runPalette(i, newTab) {
-  const r = plRows[i];
-  if (!r) return;
-  closePalette(true);
-  r.run(newTab);
-}
-async function openPalette() {
-  if (!$('palette').hidden) { $('pl-q').select(); return; }
-  closeVpnPanel(); closeExtPanel(); closeMediaPanel(); closeOverlay();
-  plData = null; plSel = 0;
-  $('pl-q').value = '';
-  $('palette').hidden = false;
-  document.body.classList.add('panel', 'palette-open');
+function tidy(v) { return Math.abs(v) >= 1e15 || (Math.abs(v) < 1e-6 && v !== 0) ? Number(v.toPrecision(10)) : Math.round(v * 1e10) / 1e10; }
+
+// ---------- QR code: open this page on your phone ----------
+
+cloud.onQr(({ dataUrl, url }) => {
+  closeVpnPanel(); closeExtPanel(); closeMediaPanel();
+  $('qr-img').src = dataUrl;
+  $('qr-url').textContent = url.replace(/^https?:\/\/(www\.)?/, '');
+  $('qr-panel').dataset.url = url;
+  $('qr-panel').hidden = false;
+  document.body.classList.add('panel');
   cloud.setOverlay(true);
-  $('pl-q').focus();
-  renderPalette();
-  plLoading = cloud.paletteData();
-  plData = await plLoading;
-  plLoading = null;
-  if (!$('palette').hidden) renderPalette();
-}
-function closePalette(keepFocus) {
-  if ($('palette').hidden) return;
-  $('palette').hidden = true;
-  document.body.classList.remove('panel', 'palette-open');
-  cloud.setOverlay(false);
-  if (!keepFocus) cloud.focusPage();
-}
-$('pl-q').addEventListener('input', () => { plSel = 0; renderPalette(); });
-$('pl-q').addEventListener('keydown', e => {
-  if (e.key === 'ArrowDown') { e.preventDefault(); plSel = Math.min(plRows.length - 1, plSel + 1); markPaletteSel(); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); plSel = Math.max(0, plSel - 1); markPaletteSel(); }
-  else if (e.key === 'Enter') {
-    e.preventDefault();
-    const shift = e.shiftKey;
-    // Typed fast? Wait for the tab list so Enter picks the right thing.
-    if (!plData && plLoading) plLoading.then(() => { renderPalette(); runPalette(plSel, shift); });
-    else runPalette(plSel, shift);
-  }
-  else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
-  e.stopPropagation();
 });
-cloud.onPaletteOpen(() => openPalette());
-document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
-}, true);
+function closeQr() {
+  if ($('qr-panel').hidden) return;
+  $('qr-panel').hidden = true;
+  document.body.classList.remove('panel');
+  cloud.setOverlay(false);
+}
+$('qr-close').onclick = () => closeQr();
+$('qr-copy').onclick = () => { navigator.clipboard.writeText($('qr-panel').dataset.url || '').catch(() => {}); closeQr(); cloud.toast('Link copied'); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeQr(); });
 
 // ---------- split view ----------
 
