@@ -8,10 +8,10 @@
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; margin-top: 6px; }
 .chart { flex: 1; display: flex; align-items: flex-end; gap: 4px; height: 110px; }
-.bar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; min-width: 0; }
-.bar i { display: block; width: 100%; max-width: 34px; border-radius: 5px 5px 2px 2px; background: var(--accent); min-height: 3px; opacity: .9; }
-.bar.today i { background: #fff; }
-.bar span { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.pbar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; min-width: 0; }
+.pbar i { display: block; width: 100%; max-width: 34px; border-radius: 5px 5px 2px 2px; background: var(--accent); min-height: 3px; opacity: .9; }
+.pbar.today i { background: #fff; }
+.pbar span { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 .list { padding: 4px 0; }
 .row { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-top: 1px solid var(--line); }
 .row:first-child { border-top: 0; }

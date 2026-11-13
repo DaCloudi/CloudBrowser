@@ -18,13 +18,13 @@ function render(r) {
   $('chart').replaceChildren(...r.days.map(d => {
     const date = new Date(d.date + 'T12:00:00');
     const label = range === 7 ? date.toLocaleDateString(undefined, { weekday: 'short' }) : (date.getDate() % 5 === 1 ? String(date.getDate()) : '');
-    return h('div', { className: 'bar' + (d.date === todayKey ? ' today' : ''), title: `${date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}: ${fmt(d.total)} blocked` },
+    return h('div', { className: 'pbar' + (d.date === todayKey ? ' today' : ''), title: `${date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}: ${fmt(d.total)} blocked` },
       h('i', { style: `height:${Math.round((d.total / max) * 100)}%` }), h('span', {}, label));
   }));
 
   const cmax = Math.max(1, ...r.companies.map(c => c.count));
   $('companies').replaceChildren(...(r.companies.length ? r.companies.map(c => h('div', { className: 'row' },
-    h('div', { className: 'name' }, h('b', {}, c.name), h('small', {}, c.known ? c.domains.join(', ') : 'tracker or ad server')),
+    h('div', { className: 'name' }, h('b', {}, c.name), h('small', {}, c.known ? c.domains.join(', ') : c.own ? 'the site’s own tracking and ads' : 'tracker or ad server')),
     h('div', { className: 'meter' }, h('i', { style: `width:${Math.round((c.count / cmax) * 100)}%` })),
     h('div', { className: 'num' }, fmt(c.count)))) : [h('div', { className: 'empty-row' }, 'Nothing blocked yet. Browse a little and check back.')]));
 

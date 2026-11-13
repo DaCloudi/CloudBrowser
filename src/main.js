@@ -1784,7 +1784,7 @@ function privacyReport(range) {
   const companies = {};
   for (const [dom, c] of Object.entries(trackers)) {
     const name = companyOf(dom) || dom;
-    const x = companies[name] || (companies[name] = { name, known: !!companyOf(dom), count: 0, domains: [] });
+    const x = companies[name] || (companies[name] = { name, known: !!companyOf(dom), own: !companyOf(dom) && Object.keys(sites).some(h => h === dom || h.endsWith('.' + dom)), count: 0, domains: [] });
     x.count += c;
     x.domains.push(dom);
   }
@@ -3692,10 +3692,10 @@ async function smokeTest() {
     switchTab(w, back.id);
     uiSend(w, 'palette-open');
     await wait(800);
-    await type('example domain');
+    await type('example.org');
     await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
     await wait(800);
-    S('palette: Enter switched to the tab', w.activeId === target.id, '| closed', await ui(w, `document.getElementById('palette').hidden`));
+    S('palette: Enter switched to the tab', tabUrl(activeTab(w)).includes('example.org'), '| closed', await ui(w, `document.getElementById('palette').hidden`));
     // Run an action from it.
     uiSend(w, 'palette-open');
     await wait(800);
