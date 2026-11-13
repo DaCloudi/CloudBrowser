@@ -112,8 +112,9 @@ compat("alvr/filesystem/src/lib.rs",
        '        .to_owned()\n'
        '}', regex=True)
 
-# The licence tool must use its own locked dependencies (a newer licence list rejects "Ubuntu-font-1.0").
-compat("alvr/xtask/src/packaging.rs", '"cargo install cargo-about --version 0.6.4"', '"cargo install cargo-about --version 0.6.4 --locked"')
+# Use the licence tool newer ALVR uses (the old one doesn't know the Ubuntu font licence).
+compat("alvr/xtask/src/packaging.rs", '"cargo install cargo-about --version 0.6.4"', '"cargo install cargo-about --version 0.8.4 --locked"')
+compat("about.toml", '    "BSD-3-Clause",\n', '    "BSD-3-Clause",\n    "bzip2-1.0.6",\n    "CDLA-Permissive-2.0",\n')
 
 # ---- Our own signing key, so updates install over the top ----
 out = SRC / "build/alvr_client_android"
