@@ -3649,7 +3649,7 @@ async function smokeTest() {
     await waitFor(() => !wc.isLoading(), 20000);
     await wait(1500);
     // Point at a link: its address shows in the corner.
-    const pt = await wc.executeJavaScript(`(() => { const a = [...document.querySelectorAll('#mw-content-text a[href^="/wiki/"]')].find(x => x.getBoundingClientRect().top > 150 && x.getBoundingClientRect().width > 30); const r = a.getBoundingClientRect(); return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2), href: a.href }; })()`);
+    const pt = await wc.executeJavaScript(`(() => { const a = [...document.querySelectorAll('a[href]')].find(x => { const r = x.getBoundingClientRect(); return r.top > 80 && r.bottom < innerHeight - 40 && r.width > 30 && r.height > 8 && /^https?:/.test(x.href); }); if (!a) return { x: 0, y: 0, href: 'none' }; const r = a.getBoundingClientRect(); return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2), href: a.href }; })()`).catch(e => ({ x: 0, y: 0, href: 'ERR ' + e.message }));
     wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
     await wait(800);
     const hb = w.hud && w.hud.getBounds();
