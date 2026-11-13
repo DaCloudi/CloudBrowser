@@ -4103,6 +4103,10 @@ async function smokeTest() {
       const fake = new CloudDesktop({ session: () => session.fromPartition(NORMAL_PARTITION), log });
       const r = fake.registerDriver();
       S('cloud desktop: register', JSON.stringify(r), JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp, 'openvr', 'openvrpaths.vrpath'), 'utf8'))));
+      // An older settings file with only a Wi-Fi headset gets the USB cable entry.
+      fs.writeFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'session.json'), JSON.stringify({ client_connections: { '7194.client': { display_name: 'Quest 3', current_ip: null, manual_ips: [], trusted: true, connection_state: 'Disconnected' } }, session_settings: {} }));
+      fake.ensureWiredInFile();
+      S('cloud desktop: wired entry added', JSON.stringify(Object.keys(JSON.parse(fs.readFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'session.json'), 'utf8')).client_connections)));
     } catch (e) { S('cloud desktop: register FAILED', e.message); }
     process.env.LOCALAPPDATA = realLocal;
 
@@ -4153,6 +4157,15 @@ async function smokeTest() {
       const trusted = await pg.view.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('.hs button')].find(x => x.textContent === 'Trust'); if (b) b.click(); return !!b; })()`).catch(e => e.message);
       await wait(2500);
       S('cloud desktop: trust clicked', trusted, '| requests', JSON.stringify(got.filter(x => x !== '"GetSession"')), '| now', JSON.stringify((await cd().liveStatus()).headsets.map(x => [x.name, x.trusted])));
+
+      // The streamer asks for a SteamVR restart (first connection of a headset): CloudBrowser does it.
+      const realRestart = cd().restartSteamvr;
+      let restartAsked = 0;
+      cd().restartSteamvr = async () => { restartAsked++; };
+      for (const so of sockets) so.write(ev('ServerRequestsSelfRestart'));
+      await wait(1500);
+      cd().restartSteamvr = realRestart;
+      S('cloud desktop: restart request handled', restartAsked);
 
       // Sound: switching the mic and low delay on sends the settings to the streamer.
       got.length = 0;

@@ -131,29 +131,106 @@ class CloudDesktop {
       if (process.platform !== 'win32') throw new Error('Cloud Desktop is for Windows PCs.');
       if (!this.driverDir()) throw new Error('Install Cloud Desktop on this PC first.');
       const running = await this.steamvrRunning();
-      if (running && await this.ping()) { progress('Cloud Desktop is already running. Put your headset on.'); return true; }
+      if (running && await this.ping()) {
+        this.keepWatching(true);
+        this.watch();
+        await this.request({ UpdateClientList: { hostname: WIRED, action: { AddIfMissing: { trusted: true, manual_ips: [] } } } }).catch(() => {});
+        progress('Cloud Desktop is already running. Put your headset on.');
+        return true;
+      }
       const adb = await this.shareAdb(progress).catch(() => null);
       if (adb && !running) await run(adb, ['kill-server'], { timeout: 8000 }).catch(() => {}); // a stuck adb from last time blocks the cable
       const { removedOthers } = this.registerDriver();
       if (removedOthers) this.log && this.log(`cloud desktop: unregistered ${removedOthers} other ALVR copies`);
+      this.ensureWiredInFile();
+      await this.ensureFirewall(progress);
       if (running) {
         progress('Restarting SteamVR to load Cloud Desktop…');
         await this.stopSteamvr();
       }
-      progress('Starting SteamVR…');
-      spawn('cmd.exe', ['/c', 'start', '', STEAMVR_URL], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      for (let i = 0; i < 90; i++) {
-        await sleep(1000);
-        if (await this.ping()) {
-          this.watch();
-          await this.applyAudio().catch(e => this.log && this.log('cloud desktop: audio settings', e.message));
-          progress('Ready. Put your headset on and open Cloud Desktop.');
-          return true;
-        }
-        if (i === 30) progress('SteamVR is taking a while… (the first start can take a minute)');
-      }
-      throw new Error('SteamVR started, but Cloud Desktop didn’t answer. Close SteamVR and click Connect again.');
+      await this.startSteamvr(progress);
+      progress('Ready. Put your headset on and open Cloud Desktop.');
+      return true;
     });
+  }
+
+  /** Start SteamVR and wait for the streamer inside it to answer, then get it ready. */
+  async startSteamvr(progress = () => {}) {
+    progress('Starting SteamVR…');
+    spawn('cmd.exe', ['/c', 'start', '', STEAMVR_URL], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    for (let i = 0; i < 90; i++) {
+      await sleep(1000);
+      if (await this.ping()) {
+        this.keepWatching(true);
+        this.watch();
+        // The USB cable entry (older settings files don't have it), then sound settings.
+        await this.request({ UpdateClientList: { hostname: WIRED, action: { AddIfMissing: { trusted: true, manual_ips: [] } } } }).catch(() => {});
+        await this.applyAudio().catch(e => this.log && this.log('cloud desktop: audio settings', e.message));
+        return true;
+      }
+      if (i === 30) progress('SteamVR is taking a while… (the first start can take a minute)');
+    }
+    throw new Error('SteamVR started, but Cloud Desktop didn’t answer. Close SteamVR and click Connect again.');
+  }
+
+  /**
+   * The streamer asks for this when a headset needs different settings (always the first time a
+   * headset connects): SteamVR must restart with them. ALVR's own window used to do it.
+   */
+  async restartSteamvr() {
+    if (this.restarting) return;
+    if (await this.isRunning()) return; // the advanced settings window is open and does it itself
+    this.restarting = Date.now();
+    this.log && this.log('cloud desktop: restarting SteamVR for the headset');
+    try {
+      await sleep(1500); // let the streamer tell the headset first
+      this.stopWatching();
+      await this.stopSteamvr();
+      await sleep(1500);
+      await this.startSteamvr();
+    } catch (e) { this.log && this.log('cloud desktop: restart failed', e.message); }
+    this.restarting = 0;
+  }
+
+  /** Keep the live connection to the streamer, reconnecting after SteamVR restarts. */
+  keepWatching(on) {
+    clearInterval(this.watchdog);
+    this.watchdog = null;
+    if (!on) return;
+    this.watchdog = setInterval(async () => {
+      if (!this.ws && !this.restarting && await this.ping()) this.watch();
+    }, 3000);
+    if (this.watchdog.unref) this.watchdog.unref();
+  }
+
+  /** Older settings files have no USB cable entry, so the cable was never used. Add it. */
+  ensureWiredInFile() {
+    const file = this.sessionFile();
+    const s = file && this.readSession();
+    if (!s) return;
+    s.client_connections = s.client_connections || {};
+    if (s.client_connections[WIRED]) return;
+    s.client_connections[WIRED] = { display_name: 'USB cable', current_ip: null, manual_ips: [], trusted: true, connection_state: 'Disconnected' };
+    fs.writeFileSync(file + '.tmp', JSON.stringify(s, null, 2));
+    fs.renameSync(file + '.tmp', file);
+    this.log && this.log('cloud desktop: added the USB cable entry');
+  }
+
+  /** Let SteamVR through the Windows firewall for Wi-Fi (asks for admin once, like ALVR's setup did). */
+  async ensureFirewall(progress) {
+    const rule = 'SteamVR ALVR vrserver';
+    if (this.prefs().firewall) return;
+    const exists = await run('netsh.exe', ['advfirewall', 'firewall', 'show', 'rule', `name=${rule}`], { timeout: 15000 }).then(() => true, () => false);
+    if (exists) { this.savePrefs({ firewall: true }); return; }
+    let root = null;
+    try { root = JSON.parse(fs.readFileSync(this.openvrPathsFile(), 'utf8').replace(/^\uFEFF/, '')).runtime[0]; } catch {}
+    if (!root) return;
+    progress('Windows will ask to let Cloud Desktop through the firewall for Wi-Fi (one time only). Click Yes.');
+    const bat = path.join(this.dir, 'firewall.bat');
+    fs.writeFileSync(bat, ['win64', 'win32'].map(b => `netsh advfirewall firewall add rule name="${rule}" dir=in program="${path.join(root, 'bin', b, 'vrserver.exe')}" action=allow`).join('\r\n') + '\r\n');
+    const ok = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p = Start-Process -FilePath '${bat.replace(/'/g, "''")}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode`], { timeout: 120000 }).then(() => true, () => false);
+    this.savePrefs({ firewall: true, firewallOk: ok }); // ask once; the USB cable works either way
+    if (!ok) progress('Firewall permission was skipped. The USB cable still works; Wi-Fi may not.');
   }
 
   async stopSteamvr() {
@@ -163,6 +240,7 @@ class CloudDesktop {
   }
 
   async disconnect() {
+    this.keepWatching(false);
     this.stopWatching();
     await this.stopSteamvr();
     return true;
@@ -225,6 +303,7 @@ class CloudDesktop {
   onEvent(text) {
     // Most events are logs and per-frame graph numbers; only parse the two we show.
     const head = text.slice(0, 80);
+    if (head.includes('"ServerRequestsSelfRestart"')) { this.restartSteamvr(); return; }
     if (!head.includes('"Session"') && !head.includes('"StatisticsSummary"')) return;
     let e;
     try { e = JSON.parse(text).event_type; } catch { return; }
@@ -255,8 +334,8 @@ class CloudDesktop {
     const fresh = live.stats && Date.now() - live.statsAt < 5000;
     const st = fresh && active && active.state === 'Streaming' ? live.stats : null;
     return {
-      installed: !!this.driverDir(), steamvrInstalled: this.steamvrInstalled(), steamvr, server, busy: this.busy,
-      state: !steamvr ? 'off' : !server ? 'starting' : active ? active.state.toLowerCase() : 'waiting',
+      installed: !!this.driverDir(), steamvrInstalled: this.steamvrInstalled(), steamvr, server, busy: this.busy, restarting: !!this.restarting,
+      state: this.restarting ? 'starting' : !steamvr ? 'off' : !server ? 'starting' : active ? active.state.toLowerCase() : 'waiting',
       via: active ? (active.wired ? 'cable' : 'wifi') : null,
       headsets,
       stats: st && {

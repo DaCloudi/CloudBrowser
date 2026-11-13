@@ -150,6 +150,21 @@ edit("alvr/session/src/lib.rs", [
      "            )]),\n"
      "            session_settings: settings::session_settings_default(),"),
 ])
+# The first time a headset connects, SteamVR must restart with its screen settings. ALVR only
+# asks its own dashboard window to do that (and fails if it isn't open). Always ask, so
+# CloudBrowser, which listens to the streamer, does the restart.
+p = SRC / "alvr/server_core/src/lib.rs"
+t = p.read_text(encoding="utf-8")
+t2, n = re.subn(r"pub fn notify_restart_driver\(\) \{.*?\n\}",
+                "pub fn notify_restart_driver() {\n"
+                "    // Cloud Desktop: CloudBrowser (or the dashboard) restarts SteamVR on this event.\n"
+                "    alvr_events::send_event(EventType::ServerRequestsSelfRestart);\n"
+                "}", t, flags=re.S)
+if n != 1:
+    sys.exit("brand.py: notify_restart_driver not found; ALVR has changed, update brand.py")
+p.write_text(t2, encoding="utf-8")
+changes.append("server_core: SteamVR restart request always sent")
+
 # With a phone, an emulator (BlueStacks) or the Quest's Wi-Fi debugging also connected, ALVR
 # picked whichever came first. Use the device on the USB cable.
 edit("alvr/adb/src/lib.rs", [
