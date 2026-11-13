@@ -3049,9 +3049,10 @@ uiOn('move-tab', (w, id, toIndex) => {
   sendState(w);
   saveSession();
 });
-uiOn('address-menu', (w, hasSelection) => {
+uiOn('address-menu', async (w, hasSelection) => {
   const t = activeTab(w);
-  const clip = clipboard.readText().trim();
+  // This Electron's clipboard.readText() may return a promise; handle both.
+  const clip = String((await clipboard.readText()) || '').trim();
   Menu.buildFromTemplate([
     { role: 'undo' }, { type: 'separator' },
     { role: 'cut', enabled: !!hasSelection }, { role: 'copy', enabled: !!hasSelection }, { role: 'paste', enabled: !!clip },
@@ -3649,7 +3650,7 @@ async function smokeTest() {
     await waitFor(() => !wc.isLoading(), 20000);
     await wait(1500);
     // Point at a link: its address shows in the corner.
-    const pt = await wc.executeJavaScript(`(() => { const a = [...document.querySelectorAll('a[href]')].find(x => { const r = x.getBoundingClientRect(); return r.top > 80 && r.bottom < innerHeight - 40 && r.width > 30 && r.height > 8 && /^https?:/.test(x.href); }); if (!a) return { x: 0, y: 0, href: 'none' }; const r = a.getBoundingClientRect(); return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2), href: a.href }; })()`).catch(e => ({ x: 0, y: 0, href: 'ERR ' + e.message }));
+    const pt = await wc.executeJavaScript(`(() => { document.body.insertAdjacentHTML('beforeend', '<a id="cbtest" href="https://example.org/where-this-goes" style="position:fixed;left:200px;top:260px;padding:20px 40px;font-size:30px;z-index:2147483647;background:#ffd84d;color:#000">HOVER ME</a>'); const r = document.getElementById('cbtest').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), href: 'https://example.org/where-this-goes' }; })()`).catch(e => ({ x: 0, y: 0, href: 'ERR ' + e.message }));
     const cbx = w.win.getContentBounds(), vb = q.view.getBounds();
     // Wiggle the real mouse onto the link (Windows only sends hover updates for real movement).
     await powershell(MOUSE_PS + `for ($i = 0; $i -le 4; $i++) { [M]::SetCursorPos(${cbx.x + vb.x + pt.x} + $i, ${cbx.y + vb.y + pt.y}); Start-Sleep -m 60 }; 'ok'`);
@@ -3672,7 +3673,7 @@ async function smokeTest() {
     // Copy clean link (Ctrl+Shift+C).
     handleShortcut(w, { type: 'keyDown', control: true, shift: true, key: 'C' });
     await wait(300);
-    S('copy clean link:', (() => { const x = clipboard.readText(); return typeof x + ':' + String(x); })(), '| toast', await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`));
+    S('copy clean link:', await clipboard.readText(), '| toast', await w.hud.webContents.executeJavaScript(`document.getElementById('b').textContent`));
     await screen('toast');
     S('link to highlight:', highlightLink('https://example.com/page#top', 'the quick brown fox'));
     // Per-site zoom is remembered.
@@ -3698,7 +3699,7 @@ async function smokeTest() {
     await screen('calculator');
     await ui(w, `(() => { const r = [...document.querySelectorAll('#suggestions .sg')].find(x => x.textContent.startsWith('= ')); r.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); })()`);
     await wait(600);
-    S('calculator: copied', (() => { const x = clipboard.readText(); return typeof x + ':' + String(x); })());
+    S('calculator: copied', await clipboard.readText());
     // Auto-refresh.
     let loads = 0;
     const onLoad = () => loads++;
