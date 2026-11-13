@@ -19,7 +19,7 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^45.0.0",
+    "electron": "https://github.com/castlabs/electron-releases#v45.2.1+wvcus",
     "electron-builder": "^26.0.12"
   },
   "build": {
@@ -66,6 +66,9 @@
           "**/*"
         ]
       }
-    ]
+    ],
+    "electronVersion": "45.2.1",
+    "electronDist": "node_modules/electron/dist",
+    "afterPack": "scripts/vmp-sign.js"
   }
 }

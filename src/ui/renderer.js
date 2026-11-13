@@ -37,7 +37,7 @@ $('translate-btn').onclick = () => cloud.translateMenu();
 cloud.onOpenExtension(id => openExtension(id));
 $('zoom-badge').onclick = () => cloud.resetZoom();
 address.addEventListener('contextmenu', e => { e.preventDefault(); cloud.addressMenu(address.selectionStart !== address.selectionEnd); });
-cloud.onBlurAddress(() => { editing = false; address.blur(); });
+cloud.onBlurAddress(() => { if (!editing) return; editing = false; address.blur(); render(); });
 $('downloads').onclick = () => cloud.openInternal('downloads');
 $('reload').onclick = () => { const t = activeTab(); t && t.loading ? cloud.stop() : cloud.reload(); };
 for (const id of ['back', 'forward']) {
@@ -615,6 +615,7 @@ function render() {
 
   const url = tab ? tab.url : '';
   if (!editing) address.value = displayUrl(url);
+  else if (!typedSinceFocus && address.value !== displayUrl(url)) { address.value = displayUrl(url); address.select(); }
   address.placeholder = `Search ${state.engineName} or enter address`;
   const kind = siteKind(displayUrl(url));
   $('siteicon').dataset.kind = kind;

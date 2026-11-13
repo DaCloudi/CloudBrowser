@@ -575,7 +575,19 @@ function wireTab(tab) {
     update();
     saveSession();
   });
-  wc.on('did-navigate-in-page', (_e, _url, isMain) => { if (isMain) { update(); saveSession(); } });
+  // Sites like YouTube change page without a full load: keep the address bar, history and page tools in step.
+  wc.on('did-navigate-in-page', (_e, url, isMain) => {
+    if (!isMain) return;
+    const prev = tab.histEntry ? tab.histEntry.url : '';
+    if (url.split('#')[0] !== prev.split('#')[0]) {
+      tab.readerable = false;
+      recordHistory(tab, url);
+    }
+    update();
+    saveSession();
+  });
+  // Clicking into the page ends any address-bar editing, so the bar shows where you really are.
+  wc.on('focus', () => { if (tab.w && tab.w.activeId === tab.id && !tab.popped) uiSend(tab.w, 'blur-address'); });
   wc.on('page-favicon-updated', (_e, favicons) => {
     tab.favicon = favicons[0] || null;
     const b = bookmarks.data.items.find(x => x.url === wc.getURL());
@@ -1962,6 +1974,22 @@ function applyUiScale(w) {
   sendState(w);
 }
 
+// ---------- Widevine (Netflix, Disney+, Spotify, Prime Video, …) ----------
+// CloudBrowser is built on castLabs' Electron, which installs Google's Widevine module the way
+// Chrome does (downloaded once, then kept up to date). Until it's ready, protected videos won't play.
+let widevine = { status: 'starting' };
+function startWidevine() {
+  const { components } = require('electron');
+  if (!components) { widevine = { status: 'unavailable' }; return; }
+  components.whenReady().then(() => {
+    widevine = { status: 'ready', components: components.status() };
+    log('Widevine ready', JSON.stringify(widevine.components));
+  }).catch(err => {
+    widevine = { status: 'error', error: String(err && err.message || err) };
+    log('Widevine failed', widevine.error);
+  });
+}
+
 // ---------- sleeping tabs ----------
 
 function wakeTab(t) {
@@ -2523,6 +2551,7 @@ pageHandle('info', () => ({
   downloadsFolder: app.getPath('downloads'),
   isDefaultBrowser,
   windows: process.platform === 'win32',
+  widevine: widevine.status,
 }));
 pageHandle('newtab', (ctx) => {
   const incognito = !!(ctx.tab && ctx.tab.private);
@@ -2665,6 +2694,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    startWidevine();
     app.setAppUserModelId('com.cloudbrowser.app');
     Menu.setApplicationMenu(null);
 
@@ -2964,6 +2994,27 @@ async function smokeTest() {
     fakeVr = false; checkVr();
     await wait(2000);
     S('vr: off again', !vrActive, 'page rect', w.pageX, w.pageY);
+  });
+
+  await step('netflix / disney+ (widevine)', async () => {
+    const { components } = require('electron');
+    S('drm: castLabs build', !!components, '| status now', widevine.status);
+    await waitFor(() => widevine.status !== 'starting', 90000);
+    S('drm: widevine', widevine.status, JSON.stringify(widevine.components || widevine.error || ''));
+    const wc = t.view.webContents;
+    load(wc, 'https://example.com/');
+    await waitFor(() => !wc.isLoading(), 10000);
+    const js = (code) => Promise.race([wc.executeJavaScript(code, true), wait(15000).then(() => 'TIMEOUT')]).catch(e => 'ERR ' + e.message);
+    S('drm: page can use Widevine', await js(`navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{ initDataTypes: ['cenc'],
+      audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }],
+      videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.42E01E"', robustness: 'SW_SECURE_DECODE' }] }])
+      .then(a => a.createMediaKeys().then(() => 'yes: ' + a.keySystem)).catch(e => 'no: ' + e.name + ' ' + e.message)`));
+    // A real Widevine licence exchange against Google's public test server.
+    load(wc, 'https://bitmovin.com/demos/drm');
+    await waitFor(() => !wc.isLoading(), 25000);
+    await wait(12000);
+    S('drm: bitmovin demo', await js(`(() => { const v = document.querySelector('video'); return JSON.stringify(v ? { time: +v.currentTime.toFixed(1), paused: v.paused, ready: v.readyState, err: v.error && v.error.message } : 'no video'); })()`));
+    await screen('drm-demo');
   });
 
   S('DONE');

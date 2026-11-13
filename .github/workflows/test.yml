@@ -11,6 +11,9 @@ jobs:
   smoke:
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+      EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,6 +39,15 @@ jobs:
           timeout 720 npx electron . || true
           cat "$CLOUD_SMOKE_LOG"
           grep -q "\[SMOKE\] DONE" "$CLOUD_SMOKE_LOG"
+
+      # Netflix, Disney+ and similar only play in builds signed by castLabs' free signing
+      # service (Widevine "VMP"). Add the secrets EVS_ACCOUNT_NAME and EVS_PASSWD to turn it on.
+      - name: Log in to castLabs signing (for Netflix / Disney+)
+        if: env.EVS_ACCOUNT_NAME != ''
+        shell: bash
+        run: |
+          python -m pip install --upgrade castlabs-evs
+          python -m castlabs_evs.account reauth -A "$EVS_ACCOUNT_NAME" -P "$EVS_PASSWD"
 
       - name: Build the installer
         run: npx electron-builder --win --publish never

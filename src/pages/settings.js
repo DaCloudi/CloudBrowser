@@ -10,7 +10,7 @@ async function load() {
   fill(s);
   $('dlFolder').textContent = info.downloadsFolder;
   $('version').textContent = info.version;
-  $('engineVersions').textContent = `Chromium ${info.chrome} · Electron ${info.electron}`;
+  $('engineVersions').textContent = `Chromium ${info.chrome} · Electron ${info.electron} · Netflix/Disney+ support (Widevine): ${({ ready: 'ready', starting: 'setting up…', error: 'not available yet', unavailable: 'not included' })[info.widevine] || info.widevine}`;
   renderAdblockHint(s);
   renderDefault(info.isDefaultBrowser);
   renderUpdate(info.update);
