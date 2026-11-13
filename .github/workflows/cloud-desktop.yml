@@ -44,7 +44,8 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo xtask package-client --ci
+        # Quest-only build: just the standard OpenXR loader (the other vendors’ downloads are flaky).
+        run: cargo xtask package-client --meta-store --ci
       - name: Sign with Cloud Desktop's key
         run: |
           VER=$(cat cloud-desktop/VERSION)
