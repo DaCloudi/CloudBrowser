@@ -4071,6 +4071,18 @@ async function smokeTest() {
     closeTab(rt.id);
   });
 
+  await step('cloud desktop settings', async () => {
+    S('cloud desktop: status', JSON.stringify(await cd().status().catch(e => ({ error: e.message }))));
+    openInternal(w, 'settings', '#vr');
+    await wait(3000);
+    const st = activeTab(w);
+    S('cloud desktop: settings section', await st.view.webContents.executeJavaScript(`JSON.stringify({ status: document.getElementById('cdStatus').textContent, pc: document.getElementById('cdInstallPc').textContent, pcEnabled: !document.getElementById('cdInstallPc').disabled, quest: !document.getElementById('cdInstallQuest').disabled })`).catch(e => e.message));
+    await st.view.webContents.executeJavaScript(`document.getElementById('cdStatus').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
+    await wait(500);
+    await screen('cloud-desktop-settings');
+    closeTab(st.id);
+  });
+
   await step('privacy report', async () => {
     // Browse somewhere with trackers first.
     const t2 = createTab(w, 'https://www.theverge.com/');
