@@ -94,6 +94,7 @@ const DEFAULT_SETTINGS = {
   ],
   sidebarWidth: 440,
   siteZoom: {},                 // zoom you chose per site, remembered
+  memorySaver: true,            // low on memory: put unused tabs to sleep sooner
   blockAutoplay: false,         // videos only start with sound after you click
   linkPreview: true,            // show where a link goes when you hover it
   discordLite: true,            // the Discord sidebar app runs Discord Lite (Vencord, plugins, logger, themes)
@@ -303,6 +304,7 @@ function pagesSend(channel, data) {
 // ---------- state to the UI ----------
 
 let statePushes = 0;
+let systemLanguage = null;
 let bookmarksRev = 1;
 function sendState(w) {
   if (!w || w.stateQueued) return;
@@ -403,15 +405,25 @@ function layout(w) {
   const sp = splitShowing(w);
   w.splitGeom = null;
   for (const t of w.tabs) {
+    let b;
     if (sp && (t.id === sp.a || t.id === sp.b)) {
       const leftW = Math.round((areaW - SPLIT_GAP) * sp.ratio);
       const isA = t.id === sp.a;
-      t.view.setBounds(isA ? { x, y, width: leftW, height: areaH } : { x: x + leftW + SPLIT_GAP, y, width: Math.max(0, areaW - leftW - SPLIT_GAP), height: areaH });
+      b = isA ? { x, y, width: leftW, height: areaH } : { x: x + leftW + SPLIT_GAP, y, width: Math.max(0, areaW - leftW - SPLIT_GAP), height: areaH };
       if (isA) w.splitGeom = { x0: x, w: areaW, y, h: areaH, divX: x + leftW, leftW };
     } else {
-      t.view.setBounds({ x, y, width: areaW, height: areaH });
+      b = { x, y, width: areaW, height: areaH };
     }
-    t.view.setVisible(t.id === w.activeId || !!(sp && (t.id === sp.a || t.id === sp.b)));
+    const visible = t.id === w.activeId || !!(sp && (t.id === sp.a || t.id === sp.b));
+    // Each of these is a trip into Chromium, so only make it when something changed.
+    // Hidden tabs keep their old size until they're shown (they're resized just before).
+    const key = `${b.x},${b.y},${b.width},${b.height}`;
+    if (visible && t.boundsKey !== key) { t.view.setBounds(b); t.boundsKey = key; }
+    if (t.shown !== visible) {
+      if (!visible && t.boundsKey !== key) { t.view.setBounds(b); t.boundsKey = key; }
+      t.view.setVisible(visible);
+      t.shown = visible;
+    }
   }
   for (const [id, v] of w.panelViews) {
     const show = panelOpen && id === w.panelApp;
@@ -601,7 +613,7 @@ function createTab(w, url, { activate = true, openerId = null, pinned = false, l
 
   if (!lazy) load(view.webContents, url);
   if (activate || !w.activeId) switchTab(w, tab.id);
-  else view.setVisible(false);
+  else { view.setVisible(false); tab.shown = false; }
   sendState(w);
   saveSession();
   return tab;
@@ -1661,7 +1673,7 @@ function setupPrivacyHeaders() {
 // Only happens when you ask for it, or for languages you chose to always translate.
 
 function userLanguage() {
-  const l = (app.getPreferredSystemLanguages && app.getPreferredSystemLanguages()[0]) || app.getLocale() || 'en';
+  const l = systemLanguage || (systemLanguage = (app.getPreferredSystemLanguages && app.getPreferredSystemLanguages()[0]) || app.getLocale() || 'en');
   return l.toLowerCase().split(/[-_]/)[0];
 }
 function languageName(code) {
@@ -2446,6 +2458,7 @@ function pipExit(wc) {
 const VR_PROCESSES = ['vrserver.exe', 'vrmonitor.exe', 'vrcompositor.exe', 'ovrserver_x64.exe', 'virtualdesktop.streamer.exe',
   'vrchat.exe', 'alvr_dashboard.exe', 'mixedrealityportal.exe', 'pico connect.exe', 'steamvr_room_setup.exe'];
 let vrActive = false;
+let vrTick = 0;
 let vrCheckBusy = false;
 
 function checkVr() {
@@ -2498,6 +2511,7 @@ function popOutTab(t) {
   pop.setAlwaysOnTop(true, 'floating');
   t.popped = true;
   t.popWin = pop;
+  t.shown = undefined; t.boundsKey = null; // the window's layout must place it fresh when it comes back
   t.view.setVisible(true);
   pop.contentView.addChildView(t.view);
   const fit = () => { const c = pop.getContentBounds(); t.view.setBounds({ x: 0, y: 0, width: c.width, height: c.height }); };
@@ -2513,6 +2527,7 @@ function popOutTab(t) {
     const target = windows.has(t.w) ? t.w : (t.private ? incognitoWindow() : normalWindow());
     if (!target) return;
     t.w = target;
+    t.shown = undefined; t.boundsKey = null;
     target.tabs.push(t);
     target.win.contentView.addChildView(t.view);
     layout(target);
@@ -2580,8 +2595,14 @@ function sleepTab(t, force = false) {
 }
 
 function isOnScreen(t) { const sp = splitShowing(t.w); return t.id === t.w.activeId || !!(sp && (t.id === sp.a || t.id === sp.b)); }
+// Memory saver: when the computer is short of memory, unused tabs sleep after 5 minutes.
+function lowOnMemory() {
+  const os = require('os');
+  return os.freemem() / os.totalmem() < 0.12 || os.freemem() < 1.2 * 1024 ** 3;
+}
 function sleepIdleTabs() {
-  const mins = vrActive ? 2 : settings.data.sleepAfter; // in VR, unused tabs sleep after 2 minutes
+  let mins = vrActive ? 2 : settings.data.sleepAfter; // in VR, unused tabs sleep after 2 minutes
+  if (settings.data.memorySaver && lowOnMemory()) mins = Math.min(mins || 5, 5);
   if (!mins) return;
   const cutoff = Date.now() - mins * 60000;
   for (const t of allTabs()) {
@@ -3387,7 +3408,8 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     });
     if (settings.data.discordLite) discordLite.start().catch(e => log('discord-lite start failed', e.message));
     setInterval(sleepIdleTabs, 60 * 1000);
-    setInterval(checkVr, 15 * 1000);
+    // Look for VR apps every 30 s (every 15 s while in VR, to notice when you leave).
+    setInterval(() => { if (vrActive || (vrTick = (vrTick + 1) % 2) === 0) checkVr(); }, 15 * 1000);
     setTimeout(checkVr, 4000);
 
     await setupExtensions();
