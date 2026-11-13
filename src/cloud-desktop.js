@@ -44,13 +44,17 @@ class CloudDesktop {
     return null;
   }
   installedVersion() { try { return fs.readFileSync(path.join(this.dir, 'pc', 'VERSION'), 'utf8').trim(); } catch { return null; } }
+  desktopModePath() {
+    const p = path.join(this.dir, 'pc', 'desktop-mode', 'DesktopPlus.exe');
+    return fs.existsSync(p) ? p : null;
+  }
 
   async status() {
     let latest = null, error = null;
     try { latest = await this.latest(); } catch (e) { error = e.message; }
     return {
       windows: process.platform === 'win32',
-      installed: !!this.exePath(), installedVersion: this.installedVersion(),
+      installed: !!this.exePath(), installedVersion: this.installedVersion(), desktopMode: !!this.desktopModePath(),
       latest: latest && latest.version, available: !!(latest && latest.pcZip && latest.questApk), page: latest && latest.page,
       running: await this.isRunning(), error,
     };
@@ -101,6 +105,8 @@ class CloudDesktop {
       await this.download(latest.pcZip, zip, progress, 'Downloading Cloud Desktop for PC');
       progress('Unpacking…');
       if (await this.isRunning()) await run('taskkill.exe', ['/im', 'ALVR Dashboard.exe', '/f']).catch(() => {});
+      await run('taskkill.exe', ['/im', 'DesktopPlus.exe', '/f']).catch(() => {});
+      await run('taskkill.exe', ['/im', 'DesktopPlusUI.exe', '/f']).catch(() => {});
       await this.unzip(zip, path.join(this.dir, 'pc'));
       fs.writeFileSync(path.join(this.dir, 'pc', 'VERSION'), latest.version);
       fs.rmSync(zip, { force: true });
@@ -113,6 +119,15 @@ class CloudDesktop {
     const exe = this.exePath();
     if (!exe) throw new Error('Install Cloud Desktop on your PC first.');
     spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore', windowsHide: false }).unref();
+    return true;
+  }
+
+  /** Desktop mode: your Windows desktop in VR (Desktop+). It starts SteamVR itself if needed. */
+  async desktopMode() {
+    const exe = this.desktopModePath();
+    if (!exe) throw new Error('Install (or update) Cloud Desktop on this PC first. Desktop mode came in Cloud Desktop 1.1.');
+    if (!(await this.isRunning())) this.start(); // the streamer, so the headset can connect
+    spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
     return true;
   }
 

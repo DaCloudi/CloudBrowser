@@ -97,14 +97,16 @@
       <div class="row"><div><div class="label">Interface size</div><div class="hint">Bigger tabs, buttons and text, easier to read and hit in a VR desktop view.</div></div>
         <select id="uiScale"><option value="100">Normal</option><option value="125">Large (125%)</option><option value="150">Extra large (150%)</option></select></div>
       <h3 class="sub">Cloud Desktop</h3>
-      <div class="row"><div><div class="label">Cloud Desktop</div><div class="hint">Your own wireless PC streaming to your Quest 3: your desktop and PC VR games, over home Wi-Fi. Built on ALVR, with CloudBrowser’s look. Needs SteamVR on this PC.</div>
+      <div class="row"><div><div class="label">Cloud Desktop</div><div class="hint">Your own PC streaming to your Quest 3, over Wi-Fi or a USB cable: PC VR games, and a desktop mode with your screens, mouse and keyboard in VR. Built on ALVR and Desktop+, with CloudBrowser’s look. Needs SteamVR on this PC.</div>
         <div class="hint" id="cdStatus">Checking…</div></div></div>
       <div class="row"><div><div class="label">1. Install on this PC</div><div class="hint">Downloads the Cloud Desktop streamer (about 100 MB).</div></div>
         <button class="btn" id="cdInstallPc">Install on this PC</button></div>
       <div class="row"><div><div class="label">2. Install on your Quest</div><div class="hint">Plug your Quest into this PC with a USB cable. Developer Mode must be on (Meta Horizon app on your phone › Devices › Headset settings › Developer Mode).</div></div>
         <button class="btn" id="cdInstallQuest">Install on my Quest</button></div>
-      <div class="row"><div><div class="label">3. Start streaming</div><div class="hint">Start Cloud Desktop here, then open Cloud Desktop on your Quest (App Library › Unknown Sources) and click Trust when your headset shows up.</div></div>
+      <div class="row"><div><div class="label">3. Start streaming</div><div class="hint">Start Cloud Desktop here, then open Cloud Desktop on your Quest (App Library › Unknown Sources). <b>USB cable:</b> just plug it in (a USB 3 or Link cable works best); it’s used automatically. <b>Wi-Fi:</b> click Trust when your headset shows up the first time.</div></div>
         <div class="inline"><button class="btn" id="cdStart">Start Cloud Desktop</button><button class="btn" id="cdPage">Release notes</button></div></div>
+      <div class="row"><div><div class="label">Desktop mode</div><div class="hint">Your Windows desktop on big screens in VR. Point and pull the trigger to click, and a VR keyboard appears when you click in a text box. Add more screens or single windows, and use the theater screen for films. Starts SteamVR and Cloud Desktop for you.</div></div>
+        <button class="btn" id="cdDesktop">Desktop mode</button></div>
       <div class="row"><div><div class="label">Pop-out windows</div><div class="hint">Right-click a tab and choose “Pop out” to float it on top of everything, handy for guides or videos while you play. Close the floating window to put it back.</div></div></div>
     </section>
 

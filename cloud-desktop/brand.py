@@ -84,6 +84,32 @@ edit("alvr/gui_common/src/theme.rs", [
     (r"pub const SEPARATOR_BG: Color32 = Color32::from_rgb\([^)]*\);", "pub const SEPARATOR_BG: Color32 = Color32::from_rgb(25, 33, 43);"),
 ], regex=True)
 
+# ---- USB cable (wired) connection ----
+# ALVR only looks for its own apps on a USB-connected headset; make it find Cloud Desktop.
+edit("alvr/system_info/src/lib.rs", [
+    ('pub const PACKAGE_NAME_STORE: &str = "alvr.client";', f'pub const PACKAGE_NAME_STORE: &str = "{APP_ID}";'),
+    ('pub const PACKAGE_NAME_GITHUB_DEV: &str = "alvr.client.dev";', f'pub const PACKAGE_NAME_GITHUB_DEV: &str = "{APP_ID}";'),
+    ('pub const PACKAGE_NAME_GITHUB_STABLE: &str = "alvr.client.stable";', f'pub const PACKAGE_NAME_GITHUB_STABLE: &str = "{APP_ID}";'),
+])
+# Wired is switched on from the start: plug the cable in and it's used (Wi-Fi still works).
+edit("alvr/session/src/lib.rs", [
+    ("            client_connections: HashMap::new(),\n            session_settings: settings::session_settings_default(),",
+     "            client_connections: HashMap::from([(\n"
+     "                \"client.wired\".to_owned(),\n"
+     "                ClientConnectionConfig {\n"
+     "                    display_name: \"USB cable\".into(),\n"
+     "                    current_ip: None,\n"
+     "                    manual_ips: HashSet::new(),\n"
+     "                    trusted: true,\n"
+     "                    connection_state: ConnectionState::Disconnected,\n"
+     "                },\n"
+     "            )]),\n"
+     "            session_settings: settings::session_settings_default(),"),
+])
+edit("alvr/dashboard/src/dashboard/components/devices.rs", [
+    ('ui.heading("Wired Connection")', 'ui.heading("USB Cable (Wired)")'),
+])
+
 # ---- Build fixes for this ALVR version (skipped when ALVR already has them) ----
 def compat(rel, old, new, regex=False):
     p = SRC / rel

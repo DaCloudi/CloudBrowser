@@ -224,7 +224,7 @@ load();
 // ---------- Cloud Desktop ----------
 (() => {
   const st = $('cdStatus');
-  const buttons = ['cdInstallPc', 'cdInstallQuest', 'cdStart'].map(id => $(id));
+  const buttons = ['cdInstallPc', 'cdInstallQuest', 'cdStart', 'cdDesktop'].map(id => $(id));
   let state = null;
   const show = (s) => {
     state = s;
@@ -238,6 +238,8 @@ load();
     $('cdInstallPc').disabled = !s.available;
     $('cdInstallQuest').disabled = !s.available;
     $('cdStart').disabled = !s.installed;
+    $('cdDesktop').disabled = !s.installed;
+    $('cdDesktop').title = s.installed && !s.desktopMode ? 'Update Cloud Desktop on this PC to get desktop mode' : '';
     $('cdPage').disabled = !s.page;
   };
   const refresh = () => cloud.call('cd-status').then(show).catch(e => { st.textContent = e.message; });
@@ -252,6 +254,7 @@ load();
   act('cdInstallPc', 'cd-install-pc');
   act('cdInstallQuest', 'cd-install-quest');
   act('cdStart', 'cd-start', () => { st.textContent = 'Starting Cloud Desktop… It opens in its own window, and starts SteamVR when your Quest connects.'; });
+  act('cdDesktop', 'cd-desktop-mode', () => { st.textContent = 'Starting desktop mode… SteamVR opens, then put your headset on. The first time, Desktop+ shows a quick setup message.'; });
   $('cdPage').onclick = () => cloud.call('cd-release-page');
   refresh();
 })();

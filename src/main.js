@@ -3418,6 +3418,7 @@ pageHandle('cd-status', () => cd().status());
 pageHandle('cd-install-pc', (ctx) => cd().installPc(cdProgress(ctx)));
 pageHandle('cd-install-quest', (ctx) => cd().installQuest(cdProgress(ctx)));
 pageHandle('cd-start', () => cd().start());
+pageHandle('cd-desktop-mode', () => cd().desktopMode());
 pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
 pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });

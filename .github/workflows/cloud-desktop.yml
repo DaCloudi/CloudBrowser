@@ -101,15 +101,75 @@ jobs:
           name: pc-streamer
           path: CloudDesktop-PC-*.zip
 
+  # Desktop mode: Desktop+ (https://github.com/elvissteinjr/DesktopPlus, GPL-3.0) puts your Windows
+  # desktop and windows into VR, with a laser-pointer mouse and a VR keyboard.
+  desktop-mode:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get Desktop+
+        shell: bash
+        run: git clone --depth 1 --branch "$(cat cloud-desktop/DESKTOPPLUS_VERSION)" https://github.com/elvissteinjr/DesktopPlus dplus
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build Desktop+
+        working-directory: dplus
+        run: |
+          nuget restore src/DesktopPlus.sln
+          msbuild /m /p:Configuration=Release /p:DPLUS_SHA='"cloud-desktop"' src/DesktopPlus.sln
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p desktop-mode
+          cp -r dplus/src/x64/Release/. desktop-mode/
+          rm -f desktop-mode/*.pdb desktop-mode/*.lib desktop-mode/*.exp desktop-mode/*.ipdb desktop-mode/*.iobj
+          find desktop-mode -name "*.h" -delete
+          ls desktop-mode | head -40
+          test -f desktop-mode/DesktopPlus.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mode
+          path: desktop-mode
+
+  # One PC download: the streamer, plus desktop mode in its own folder.
+  package:
+    needs: [pc-streamer, desktop-mode]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pc-streamer
+          path: pc
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-mode
+          path: desktop-mode
+      - name: Combine
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          mkdir stage
+          (cd stage && unzip -q ../pc/CloudDesktop-PC-$VER.zip)
+          cp -r desktop-mode stage/desktop-mode
+          echo "$VER" > stage/CLOUD_DESKTOP_VERSION
+          rm pc/CloudDesktop-PC-$VER.zip
+          (cd stage && zip -qr ../CloudDesktop-PC-$VER.zip .)
+          unzip -l CloudDesktop-PC-$VER.zip | grep -E "ALVR Dashboard.exe|desktop-mode/DesktopPlus.exe|desktop-mode/DesktopPlusUI.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc-download
+          path: CloudDesktop-PC-*.zip
+
   release:
     if: github.ref == 'refs/heads/main'
-    needs: [quest-app, pc-streamer]
+    needs: [quest-app, package]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
+          pattern: '{quest-app,pc-download}'
           merge-multiple: true
       - name: Publish
         env:
@@ -122,5 +182,5 @@ jobs:
           gh release create "$TAG" out/* --prerelease --latest=false --title "Cloud Desktop $VER" --notes "Cloud Desktop: wireless PC streaming to your Quest, by CloudBrowser.
           Based on ALVR $ALVR (https://github.com/alvr-org/ALVR, MIT licence).
 
-          - CloudDesktop-PC-$VER.zip: the PC streamer (needs SteamVR).
+          - CloudDesktop-PC-$VER.zip: the PC streamer (needs SteamVR), with desktop mode (Desktop+ $(cat cloud-desktop/DESKTOPPLUS_VERSION), https://github.com/elvissteinjr/DesktopPlus, GPL-3.0).
           - CloudDesktop-Quest-$VER.apk: the Quest app (install by sideloading, or from CloudBrowser: Settings, VR, Cloud Desktop)."
