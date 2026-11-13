@@ -112,6 +112,9 @@ compat("alvr/filesystem/src/lib.rs",
        '        .to_owned()\n'
        '}', regex=True)
 
+# The licence tool must use its own locked dependencies (a newer licence list rejects "Ubuntu-font-1.0").
+compat("alvr/xtask/src/packaging.rs", '"cargo install cargo-about --version 0.6.4"', '"cargo install cargo-about --version 0.6.4 --locked"')
+
 # ---- Our own signing key, so updates install over the top ----
 out = SRC / "build/alvr_client_android"
 out.mkdir(parents=True, exist_ok=True)
