@@ -1,5 +1,4 @@
 'use strict';
-const $ = id => document.getElementById(id);
 let range = 7;
 
 function fmt(n) { return Number(n || 0).toLocaleString(); }

@@ -3688,7 +3688,8 @@ async function smokeTest() {
     // Jump to a tab by typing part of its title.
     const target = createTab(w, 'https://example.org/', { activate: false });
     await wait(2500);
-    switchTab(w, c.id);
+    const back = w.tabs.find(x => x.id !== target.id);
+    switchTab(w, back.id);
     uiSend(w, 'palette-open');
     await wait(800);
     await type('example domain');
