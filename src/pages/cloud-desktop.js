@@ -123,9 +123,9 @@ $('checkCable').onclick = e => act(e.target, async () => {
     document.querySelector('.meter').classList.toggle('hide', !measured);
     if (measured) {
       $('cLink').textContent = r.linkName;
-      $('cSpeed').textContent = r.mbps ? `${r.mbps.toLocaleString()} Mbps` : 'Couldn’t measure';
+      $('cSpeed').textContent = { 'usb3+': 'up to 10 Gbps', usb3: 'up to 5 Gbps', usb2: 'up to 480 Mbps', usb1: '12 Mbps' }[r.link] || '–';
       $('cBattery').textContent = r.battery ? `${r.battery}%${r.charging ? ', charging' : ', not charging'}` : (r.charging ? 'Charging' : '–');
-      $('cMeter').style.width = Math.min(100, (r.mbps || 0) / 20) + '%';
+      $('cMeter').style.width = ({ 'usb3+': 100, usb3: 70, usb2: 12, usb1: 2 }[r.link] || 0) + '%';
       $('cMeter').style.background = r.verdict === 'great' ? '#3ba55d' : r.verdict === 'ok' ? '#f0b232' : 'var(--danger)';
     }
     $('cTips').replaceChildren(...r.tips.map(t => h('li', {}, t)));

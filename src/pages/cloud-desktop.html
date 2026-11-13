@@ -57,17 +57,17 @@
     <h3>USB cable</h3>
     <section class="cable" id="cable">
       <div class="cable-top">
-        <div><div class="label">Cable checker</div><div class="hint">Plug your Quest into this PC and find out if the cable and port are fast enough: USB 2 or 3, the real speed, and whether it charges your headset.</div></div>
+        <div><div class="label">Cable checker</div><div class="hint">Plug your Quest into this PC and find out if the cable and port are fast enough: USB 2 or 3, and whether it charges your headset. It only asks the headset; nothing heavy goes down the cable.</div></div>
         <button class="btn" id="checkCable">Check my cable</button>
       </div>
       <div class="cable-result" id="cableResult" hidden>
         <div class="verdict" id="verdict"><span class="dot"></span><b id="verdictTitle"></b></div>
         <div class="facts">
           <div><span>Connection</span><b id="cLink">–</b></div>
-          <div><span>Real speed</span><b id="cSpeed">–</b></div>
+          <div><span>Top speed</span><b id="cSpeed">–</b></div>
           <div><span>Headset battery</span><b id="cBattery">–</b></div>
         </div>
-        <div class="meter" title="0 to 2,000 Mbps"><i id="cMeter"></i><em style="left:15%">USB 2 limit</em><em style="left:40%">good</em></div>
+        <div class="meter"><i id="cMeter"></i><em style="left:12%">USB 2</em><em style="left:70%">USB 3</em></div>
         <ul class="tips" id="cTips"></ul>
       </div>
     </section>

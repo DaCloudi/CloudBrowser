@@ -120,6 +120,7 @@ class CloudDesktop {
   async shareAdb(progress) {
     const dir = this.driverDir();
     const mine = await this.adb(progress);
+    if (this._pathAdb) return mine; // the streamer finds that one on PATH too
     const theirs = path.join(dir, 'platform-tools');
     if (!fs.existsSync(path.join(theirs, 'adb.exe'))) fs.cpSync(path.dirname(mine), theirs, { recursive: true });
     return mine;
@@ -138,8 +139,7 @@ class CloudDesktop {
         progress('Cloud Desktop is already running. Put your headset on.');
         return true;
       }
-      const adb = await this.shareAdb(progress).catch(() => null);
-      if (adb && !running) await run(adb, ['kill-server'], { timeout: 8000 }).catch(() => {}); // a stuck adb from last time blocks the cable
+      await this.shareAdb(progress).catch(() => null);
       const { removedOthers } = this.registerDriver();
       if (removedOthers) this.log && this.log(`cloud desktop: unregistered ${removedOthers} other ALVR copies`);
       this.ensureWiredInFile();
@@ -371,53 +371,34 @@ class CloudDesktop {
       const speedText = (await sh('cat /sys/class/udc/*/current_speed 2>/dev/null; getprop sys.usb.speed')).toLowerCase();
       const link = /super-speed-plus|superspeedplus/.test(speedText) ? 'usb3+' : /super-speed|superspeed/.test(speedText) ? 'usb3' : /high-speed|highspeed/.test(speedText) ? 'usb2' : /full-speed/.test(speedText) ? 'usb1' : 'unknown';
 
-      progress('Measuring the real speed (about 5 seconds)…');
-      const mbps = await this.measure(adb, dev.serial);
+      // No speed test: pushing lots of data down a shaky cable can upset Windows' USB driver.
+      const mbps = null;
 
       const battery = await sh('dumpsys battery');
       const level = Number((battery.match(/level:\s*(\d+)/) || [])[1]) || null;
       const charging = /USB powered:\s*true|AC powered:\s*true/.test(battery);
-      const streaming = !!(this.live && this.live.stats && Date.now() - this.live.statsAt < 5000);
 
       const linkName = { 'usb3+': 'USB 3 (10 Gbps)', usb3: 'USB 3 (5 Gbps)', usb2: 'USB 2 (480 Mbps)', usb1: 'USB 1 (12 Mbps)', unknown: 'Unknown' }[link];
       let verdict, title;
       const tips = [];
-      if (link === 'usb2' || link === 'usb1' || (mbps && mbps < 300)) {
+      if (link === 'usb2' || link === 'usb1') {
         verdict = 'slow'; title = 'Too slow for smooth streaming';
         tips.push('This is a USB 2 connection. Use a blue (USB 3) port on your PC, or one marked SS, and a USB 3 or Link cable. The Quest’s charging cable that came in the box is USB 2 on some models.');
         tips.push('It still works, but Cloud Desktop may look blurry or stutter in fast games. Wi-Fi 6 on a good router can be better.');
-      } else if (mbps && mbps < 800) {
-        verdict = 'ok'; title = 'Good enough';
-        tips.push('Fine for desktop mode and films. For fast games, try another USB 3 port (ones on the back of the PC are often faster) or a shorter cable.');
+      } else if (link === 'unknown') {
+        verdict = 'ok'; title = 'Connected (speed unknown)';
+        tips.push('Your Quest didn’t say which USB type it’s using. If the picture stutters, try a USB 3 port on the back of the PC.');
       } else {
         verdict = 'great'; title = 'Great cable';
         tips.push('Plenty of speed for top quality.');
       }
       if (!charging) tips.push('Your headset isn’t charging from this port, so the battery will run down while you play. Some USB 3 ports give more power.');
-      if (streaming) tips.push('You were streaming during the test, so the speed reads lower than it really is.');
       this.savePrefs({ lastCable: verdict });
       return { found: true, model: dev.model, link, linkName, mbps, battery: level, charging, verdict, title, tips };
     });
   }
 
-  /** Pull zeros from the headset over the cable for a few seconds and time it. */
-  measure(adb, serial) {
-    return new Promise(resolve => {
-      const child = spawn(adb, ['-s', serial, 'exec-out', 'dd if=/dev/zero bs=1048576 count=4096 2>/dev/null'], { windowsHide: true });
-      let bytes = 0, t0 = 0, done = false;
-      const finish = () => {
-        if (done) return; done = true;
-        clearTimeout(timer);
-        try { child.kill(); } catch {}
-        const secs = t0 ? (Date.now() - t0) / 1000 : 0;
-        resolve(secs > 0.5 && bytes > 4 * 1048576 ? Math.round(bytes * 8 / secs / 1e6) : null);
-      };
-      child.stdout.on('data', b => { if (!t0) { t0 = Date.now(); return; } bytes += b.length; });
-      child.on('error', finish);
-      child.on('close', finish);
-      const timer = setTimeout(finish, 5000);
-    });
-  }
+
   async download(url, file, progress, label) {
     const r = await this.session().fetch(url);
     if (!r.ok) throw new Error(`Download failed (${r.status})`);
@@ -488,6 +469,16 @@ class CloudDesktop {
   }
 
   async adb(progress) {
+    // The streamer uses an adb on PATH first (SideQuest, Android Studio…). Two different adb
+    // versions keep restarting each other's server and the cable connection, so use that one too.
+    if (this._pathAdb === undefined) {
+      this._pathAdb = null;
+      try {
+        const found = (await run('where.exe', ['adb'], { timeout: 8000 })).split(/\r?\n/).map(x => x.trim()).find(x => /adb\.exe$/i.test(x));
+        if (found && fs.existsSync(found)) this._pathAdb = found;
+      } catch {}
+    }
+    if (this._pathAdb) return this._pathAdb;
     const exe = path.join(this.dir, 'platform-tools', 'adb.exe');
     if (fs.existsSync(exe)) return exe;
     progress('Getting Google’s Android tools (one time only)…');
