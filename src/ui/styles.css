@@ -459,3 +459,14 @@ svg .fill, svg.fill { fill: currentColor; stroke: none; }
   background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
 }
 #vr-badge.show { display: flex; }
+
+/* ---------- split view ---------- */
+#split-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+#split-divider { position: fixed; z-index: 5; cursor: col-resize; display: grid; place-items: center; background: var(--bar); }
+#split-divider[hidden], #split-active[hidden] { display: none; }
+#split-divider span { width: 2px; height: 36px; border-radius: 1px; background: var(--field-border); transition: background .15s, height .15s; }
+#split-divider:hover span, #split-divider.dragging span { background: var(--accent); height: 56px; }
+#split-active { position: fixed; z-index: 5; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; }
+.tab.in-split .favicon { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 4px; }
+#tabs .tab.split-L.split-shown + .tab.split-R.split-shown { margin-left: -2px; }
+#tabs .tab.split-shown:not(.active) { background: color-mix(in srgb, var(--tab-active) 55%, transparent); }

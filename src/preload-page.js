@@ -1,6 +1,23 @@
 // Runs in every tab, but only gives an API to CloudBrowser's own cloud:// pages.
 // Normal websites see nothing. The main process also checks the sender's URL.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
+
+// ---------- Discord Lite ----------
+// In CloudBrowser's Discord (the sidebar app), load Discord Lite before Discord's own code:
+// Vencord, the Discord Lite plugins and the theme. The main process only answers for that one
+// Discord view, so discord.com in an ordinary tab is left alone.
+if (location.hostname === 'discord.com' && window === window.top) {
+  let parts = null;
+  try { parts = ipcRenderer.sendSync('dl-bundle'); } catch {}
+  if (Array.isArray(parts)) {
+    contextBridge.exposeInMainWorld('__dlBridge', {
+      invoke: (cmd, args) => ipcRenderer.invoke('dl-invoke', String(cmd), args == null ? null : JSON.parse(JSON.stringify(args))),
+    });
+    // The plugins were written for Discord Lite's Tauri shell; give them the same invoke().
+    webFrame.executeJavaScript('window.__TAURI_INTERNALS__ = { invoke: function (c, a) { return window.__dlBridge.invoke(c, a); } };');
+    for (const code of parts) webFrame.executeJavaScript(code).catch(e => console.error('[Discord Lite]', e));
+  }
+}
 
 if (location.protocol === 'cloud:') {
   contextBridge.exposeInMainWorld('cloud', {

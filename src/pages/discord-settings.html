@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discord Lite settings</title>
+<link rel="icon" href="/discord-lite.png">
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg-0: #07101b; --bg-1: #0b1522; --bg-2: #0e1926; --bg-3: #13202f;
+    --hl: rgba(255,255,255,.05); --hl2: rgba(255,255,255,.09); --border: rgba(255,255,255,.08);
+    --text: #e8edf3; --strong: #fff; --muted: #9aa7b6; --faint: #64748a;
+    --accent: #4d8dff; --red: #f2555a; --green: #3ba55d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg-0: #eef1f5; --bg-1: #f6f8fa; --bg-2: #fff; --bg-3: #f2f4f7;
+      --hl: rgba(7,16,27,.04); --hl2: rgba(7,16,27,.07); --border: rgba(7,16,27,.09);
+      --text: #1a2230; --strong: #000; --muted: #556274; --faint: #8d98a7;
+      --accent: #2f6fe4; --red: #d83c3e; --green: #2d8a4e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg-2); color: var(--text);
+    font: 14px/20px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 2; background: var(--bg-1);
+    border-bottom: 1px solid var(--border); padding: 14px 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  h1 { font-size: 16px; font-weight: 500; margin: 0; flex: 1; color: var(--strong); }
+  #status { font-size: 12px; color: var(--faint); transition: color .2s; }
+  #status.ok { color: var(--green); }
+  #status.err { color: var(--red); }
+  main { padding: 8px 20px 32px; max-width: 640px; margin: 0 auto; }
+  section { margin-top: 20px; }
+  h2 {
+    font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0 0 8px 4px;
+  }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; }
+  .row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 16px;
+  }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row.sub { padding-left: 32px; }
+  .row.disabled { opacity: .45; pointer-events: none; }
+  .label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .label b { font-weight: 500; color: var(--text); }
+  .label small { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .label small.warn { color: var(--red); }
+  /* switch */
+  .switch { position: relative; width: 44px; height: 24px; flex: 0 0 auto; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch span {
+    position: absolute; inset: 0; border-radius: 9999px; background: var(--hl2);
+    cursor: pointer; transition: background .15s;
+  }
+  .switch span::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: var(--text); transition: transform .15s;
+  }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(20px); background: #fff; }
+  .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select, input[type=number] {
+    background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font: inherit; outline: none; flex: 0 0 auto;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+  input[type=number] { width: 84px; }
+  button {
+    font: inherit; font-weight: 500; cursor: pointer; border: none; flex: 0 0 auto;
+    background: var(--hl); color: var(--text); border-radius: 8px; padding: 6px 12px;
+  }
+  button:hover { background: var(--hl2); }
+  .keycap {
+    min-width: 120px; text-align: center; border: 1px solid var(--border);
+    background: var(--bg-3); font-variant-numeric: tabular-nums;
+  }
+  .keycap.listening { border-color: var(--accent); color: var(--accent); }
+  .btns { display: flex; gap: 8px; }
+  footer { color: var(--faint); font-size: 12px; text-align: center; margin-top: 28px; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--hl2); border-radius: 9999px; }
+</style>
+</head>
+<body>
+<header>
+  <img src="/discord-lite.png" alt="" style="width:24px;height:24px;border-radius:6px">
+  <h1>Discord Lite settings</h1>
+  <span id="status">Changes save automatically</span>
+</header>
+<main id="main"></main>
+
+<script>
+(() => {
+  const invoke = (c, a) => window.cloud.call('dl', c, a || null);
+  let S = null;
+
+  // ---- tiny form builder -------------------------------------------------
+  const get = path => path.split(".").reduce((o, k) => o[k], S);
+  const set = (path, v) => {
+    const ks = path.split("."), last = ks.pop();
+    ks.reduce((o, k) => o[k], S)[last] = v;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") e.className = v;
+      else if (k.startsWith("on")) e[k] = v;
+      else e.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) e.append(k);
+    return e;
+  };
+  const label = (title, desc) => h("div", { class: "label" }, h("b", {}, title), desc ? h("small", {}, desc) : null);
+
+  function toggle(path, title, desc, opts = {}) {
+    const input = h("input", { type: "checkbox" });
+    input.checked = !!get(path);
+    input.onchange = () => { set(path, input.checked); save(); refreshDeps(); };
+    const row = h("div", { class: "row" + (opts.sub ? " sub" : "") },
+      label(title, desc), h("label", { class: "switch" }, input, h("span")));
+    if (opts.dependsOn) row.dataset.dependsOn = opts.dependsOn;
+    return row;
+  }
+
+  function choice(path, title, desc, options, opts = {}) {
+    const sel = h("select");
+    for (const [v, text] of options) {
+      const o = h("option", { value: String(v) }, text);
+      sel.append(o);
+    }
+    sel.value = String(get(path));
+    sel.onchange = () => {
+      const num = typeof get(path) === "number";
+      set(path, num ? Number(sel.value) : sel.value);
+      save(); refreshDeps();
+    };
+    const row = h("div", { class: "row" + (opts.sub ? " sub" : "") }, label(title, desc), sel);
+    if (opts.dependsOn) row.dataset.dependsOn = opts.dependsOn;
+    return row;
+  }
+
+  function number(path, title, desc, min, max, opts = {}) {
+    const inp = h("input", { type: "number", min: String(min), max: String(max) });
+    inp.value = get(path);
+    inp.onchange = () => {
+      const v = Math.max(min, Math.min(max, Math.round(Number(inp.value) || min)));
+      inp.value = v; set(path, v); save();
+    };
+    const row = h("div", { class: "row" + (opts.sub ? " sub" : "") }, label(title, desc), inp);
+    if (opts.dependsOn) row.dataset.dependsOn = opts.dependsOn;
+    return row;
+  }
+
+  function refreshDeps() {
+    document.querySelectorAll("[data-depends-on]").forEach(r => {
+      const [path, want] = r.dataset.dependsOn.split("=");
+      const ok = want === undefined ? !!get(path) : String(get(path)) === want;
+      r.classList.toggle("disabled", !ok);
+    });
+    const stereoWarn = document.getElementById("stereo-warn");
+    if (stereoWarn) stereoWarn.style.display = S.call.stereo ? "" : "none";
+  }
+
+  // ---- push-to-talk key capture -----------------------------------------
+  const MOD_CODES = /^(Shift|Control|Alt|Meta|OS)(Left|Right)?$/;
+  const pretty = key => key.split("+").map(k => k
+    .replace(/^Key([A-Z])$/, "$1").replace(/^Digit(\d)$/, "$1")
+    .replace(/^Numpad/, "Num ").replace("Backquote", "`").replace("Super", "Win")).join(" + ");
+
+  function keyRow() {
+    const btn = h("button", { class: "keycap", title: "Click, then press the key you want" }, pretty(S.ptt.key));
+    let listening = false;
+    const stop = () => { listening = false; btn.classList.remove("listening"); btn.textContent = pretty(S.ptt.key); document.removeEventListener("keydown", onKey, true); };
+    const onKey = e => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.code === "Escape") return stop();
+      if (MOD_CODES.test(e.code)) return; // wait for a real key
+      const mods = [];
+      if (e.ctrlKey) mods.push("Ctrl");
+      if (e.altKey) mods.push("Alt");
+      if (e.shiftKey) mods.push("Shift");
+      if (e.metaKey) mods.push("Super");
+      const prev = S.ptt.key;
+      S.ptt.key = [...mods, e.code].join("+");
+      stop();
+      save().then(ok => { if (!ok) { S.ptt.key = prev; btn.textContent = pretty(prev); } });
+    };
+    btn.onclick = () => {
+      if (listening) return stop();
+      listening = true; btn.classList.add("listening"); btn.textContent = "Press a key… (Esc to cancel)";
+      document.addEventListener("keydown", onKey, true);
+    };
+    const row = h("div", { class: "row sub" },
+      label("Key", "Pick a key nothing else uses (other apps still see it). F13–F24 (map them to a mouse side button in your mouse software) or ` work well."),
+      btn);
+    row.dataset.dependsOn = "ptt.enabled";
+    return row;
+  }
+
+  // ---- layout ------------------------------------------------------------
+  function render() {
+    const main = document.getElementById("main");
+    main.textContent = "";
+    const sec = (title, ...rows) => h("section", {}, h("h2", {}, title), h("div", { class: "card" }, ...rows));
+
+    main.append(
+      sec("Appearance",
+        (() => {
+          const r = choice("theme", "Theme", "Clean Lite, Root Style and Phoenix fire follow Discord's own Dark/Light setting.",
+            [["none", "None (Discord default)"], ["clean-lite", "Clean Lite"], ["root-style", "Root Style"], ["phoenix", "Phoenix fire"], ["custom", "Custom (theme.css)"]]);
+          return r;
+        })(),
+        h("div", { class: "row sub", "data-depends-on": "theme=custom" },
+          label("Custom theme file", "Edit theme.css in Notepad, save it, then click Reload."),
+          h("div", { class: "btns" },
+            h("button", { onclick: () => invoke("dl_open_theme_file") }, "Edit theme.css"),
+            h("button", { onclick: () => invoke("dl_reload_theme").then(() => status("Theme reloaded", "ok")) }, "Reload"))),
+        toggle("liteMode", "Lite mode", "Turns off animations, transitions and blur. Uses less CPU and GPU."),
+        toggle("compactMode", "Compact mode", "Tighter messages and channel rows, smaller avatars. Fits more on screen."),
+        toggle("plainFolders", "Plain folder colours", "Server folders become solid colour tiles instead of see-through boxes of mini icons.")
+      ),
+      sec("Startup",
+        toggle("backgroundStart", "Run Discord in the background", "Discord starts with CloudBrowser (hidden), so notifications, the unread badge and Message Logger+ work before you open it. Takes effect next time CloudBrowser starts.")
+      ),
+      sec("Push-to-talk",
+        toggle("ptt.enabled", "Global push-to-talk", "Works while you're in a game or another app. In Discord, set Voice & Video › Input Mode to Voice Activity with low sensitivity, and let this key do the gating."),
+        keyRow(),
+        number("ptt.releaseDelayMs", "Release delay (ms)", "Keeps the mic open a moment after you let go, so your last word isn't cut off.", 0, 1000, { sub: true, dependsOn: "ptt.enabled" })
+      ),
+      sec("Desktop",
+        toggle("openLinksInBrowser", "Open links in a new tab", "Links from Discord open as CloudBrowser tabs."),
+        toggle("notifications", "Desktop notifications", "Also turn on Notifications in Discord's own settings."),
+        h("div", { class: "row" },
+          label("Test notifications", "If nothing pops up: Windows Settings › System › Notifications › make sure Notifications and CloudBrowser are on, and Do not disturb is off."),
+          h("button", { onclick: testNotification }, "Send a test")),
+        toggle("unreadBadge", "Unread badge", "Count on the Discord button, and a red dot on CloudBrowser's taskbar button when you're mentioned."),
+        toggle("readAllButton", "\"Read all\" button", "Under the Direct Messages button: marks every server as read.")
+      ),
+      sec("Upkeep",
+        toggle("autoRecover", "Auto-reload if Discord freezes", "Reloads Discord if it stops responding or goes blank (e.g. after sleep or a network drop)."),
+        toggle("autoUpdateVencord", "Update Vencord automatically", "Checks about once a week. New versions load the next time Discord reloads.")
+      ),
+      sec("Calls",
+        choice("call.maxBitrateKbps", "Voice bitrate", "What you send. Discord's normal is 64 kbps.",
+          [[64, "64 kbps (Discord default)"], [96, "96 kbps (recommended)"], [128, "128 kbps (needs a good connection)"], [192, "192 kbps"], [256, "256 kbps"]]),
+        (() => {
+          const r = toggle("call.stereo", "Send in stereo", null);
+          const warn = h("small", { id: "stereo-warn", class: "warn" }, "Turn off Echo Cancellation and Noise Suppression in Discord's Voice & Video settings, or it'll be mixed back to mono.");
+          r.querySelector(".label").append(warn);
+          return r;
+        })(),
+        toggle("call.micMeter", "Mic level meter", "A live bar under your name during calls. Green: people can hear you. Grey: muted or push-to-talk not held."),
+        toggle("call.rawMic", "Raw microphone", "Turns off the browser's own echo cancellation, noise suppression and auto volume, so your mic software (SteelSeries GG, NVIDIA Broadcast…) is the only thing processing your voice. Also set Discord's Noise Suppression to None."),
+        choice("call.levelling", "Volume levelling", "Evens out loud and quiet people. Applies from the next time you join a call; changing the strength mid-call works straight away.",
+          [["off", "Off"], ["light", "Light"], ["medium", "Medium (recommended)"], ["strong", "Strong"]]),
+        toggle("call.receiveStereo", "Hear stereo", "From people who send it."),
+        toggle("call.fec", "Error correction", "Smoother audio on a bad connection."),
+        toggle("call.dtx", "Silence suppression (DTX)", "Saves data between words but can sound choppy. Usually best off.")
+      ),
+      sec("Message Logger+",
+        choice("logger.logWhere", "Log messages from", "Where deleted and edited messages (and ghost pings) are saved. Group DMs count as DMs.",
+          [["all", "DMs and servers"], ["dms", "DMs only"], ["servers", "Servers only"]]),
+        toggle("logger.logDeletes", "Log deleted messages"),
+        toggle("logger.logEdits", "Log edited messages"),
+        toggle("logger.ignoreOwnMessages", "Ignore my own messages", "Turn this off to test by deleting your own messages."),
+        toggle("logger.ignoreBots", "Ignore bots"),
+        choice("logger.cacheAttachments", "Keep images & videos", "Downloaded as they arrive so deleted ones can be kept. \"DMs only\" uses far less data in busy servers. Only from places you're logging.",
+          [["all", "Everywhere"], ["dms", "DMs only"], ["off", "Off"]]),
+        number("logger.maxAttachmentMb", "Max file size (MB)", null, 1, 50, { sub: true }),
+        toggle("logger.ghostPingAlerts", "Ghost ping alerts", "Notify me when someone pings me, then deletes or edits it out."),
+        toggle("logger.showButton", "Message Log button", "Clock icon in the channel header."),
+        toggle("logger.shortcut", "Ctrl+Shift+L opens the Message Log"),
+        choice("logger.keepDays", "Delete old logs", "Logs and saved images older than this are removed automatically.",
+          [[7, "After 7 days"], [14, "After 14 days"], [30, "After 30 days"], [90, "After 90 days"], [0, "Never"]]),
+        h("div", { class: "row" }, label("Log files", "Daily logs and saved images."),
+          h("button", { onclick: () => invoke("ml_open_folder") }, "Open folder"))
+      ),
+      h("footer", {}, "Discord Lite in CloudBrowser · shared with the Discord Lite app: %APPDATA%\\com.local.discordlite")
+    );
+    refreshDeps();
+  }
+
+  async function testNotification() {
+    try {
+      await invoke("dl_test_notification");
+      status("Test sent: check the bottom-right of your screen", "ok");
+    } catch (e) {
+      status("Windows refused the notification: " + e, "err");
+    }
+  }
+
+  async function runUpdate() {
+    try {
+      await invoke("dl_run_update");
+      status("Updating: Discord Lite will close and reopen", "ok");
+    } catch (e) {
+      status(String(e), "err");
+    }
+  }
+
+  // ---- saving ------------------------------------------------------------
+  let statusTimer;
+  function status(text, cls) {
+    const el = document.getElementById("status");
+    el.textContent = text; el.className = cls || "";
+    clearTimeout(statusTimer);
+    if (cls === "ok") statusTimer = setTimeout(() => { el.textContent = "Changes save automatically"; el.className = ""; }, 1500);
+  }
+  async function save() {
+    try {
+      await invoke("dl_save_settings", { settings: S });
+      status("Saved", "ok");
+      return true;
+    } catch (e) {
+      status(String(e), "err");
+      return false;
+    }
+  }
+
+  invoke("dl_get_settings").then(s => { S = s; render(); })
+    .catch(e => { document.getElementById("main").textContent = "Couldn't load settings: " + e; });
+})();
+</script>
+</body>
+</html>

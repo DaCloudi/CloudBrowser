@@ -36,6 +36,8 @@ function fill(s) {
   $('sponsorBlock').checked = !!s.sponsorBlock;
   $('hideShorts').checked = !!s.hideShorts;
   $('autoPip').checked = !!s.autoPip;
+  $('discordLite').checked = !!s.discordLite;
+  $('dlRow').hidden = !s.discordLite;
   $('vrMode').value = s.vrMode;
   $('uiScale').value = String(s.uiScale);
   renderSbCats(s);
@@ -163,6 +165,9 @@ for (const id of ['sidebarAppsEnabled', 'sponsorBlock', 'hideShorts', 'autoPip']
   $(id).onchange = async e => { await set(id, e.target.checked); if (id === 'sponsorBlock') $('sbCatsRow').hidden = !e.target.checked; };
 }
 $('vrMode').onchange = e => set('vrMode', e.target.value);
+$('discordLite').onchange = async e => { await set('discordLite', e.target.checked); $('dlRow').hidden = !e.target.checked; };
+$('dlSettings').onclick = () => { location.href = 'cloud://discord-settings/'; };
+$('dlLog').onclick = () => { location.href = 'cloud://discord-log/'; };
 $('uiScale').onchange = e => set('uiScale', Number(e.target.value));
 const SB_CATS = [['sponsor', 'Sponsors'], ['selfpromo', 'Self-promotion'], ['interaction', '“Like and subscribe” reminders'], ['intro', 'Intros'], ['outro', 'End cards'], ['preview', 'Previews and recaps'], ['filler', 'Off-topic tangents'], ['music_offtopic', 'Talking in music videos']];
 function renderSbCats(s) {

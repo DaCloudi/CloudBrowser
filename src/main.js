@@ -10,7 +10,7 @@
 
 const {
   app, BaseWindow, WebContentsView, ipcMain, Menu, shell, dialog, session,
-  protocol, nativeTheme, clipboard,
+  protocol, nativeTheme, clipboard, nativeImage, Notification, desktopCapturer,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -18,6 +18,7 @@ const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 const { Store, flushAll } = require('./store');
 const { Vpn } = require('./vpn');
+const { DiscordLite, isDiscordHost } = require('./discord-lite');
 
 let extLib = null;
 let webStoreLib = null;
@@ -91,6 +92,7 @@ const DEFAULT_SETTINGS = {
     { id: 'vrchat', title: 'VRChat', url: 'https://vrchat.com/home' },
   ],
   sidebarWidth: 440,
+  discordLite: true,            // the Discord sidebar app runs Discord Lite (Vencord, plugins, logger, themes)
   sponsorBlock: true,
   sponsorCategories: ['sponsor', 'selfpromo', 'interaction'],
   hideShorts: true,
@@ -247,6 +249,14 @@ const MIME = {
 
 function handleCloudRequest(req) {
   const u = new URL(req.url);
+  if (u.hostname === 'discord-log' && u.pathname.startsWith('/file/')) {
+    const name = decodeURIComponent(u.pathname.slice(6));
+    const body = discordLite && discordLite.keptFile(name);
+    if (!body) return new Response('Not found', { status: 404 });
+    const ext = path.extname(name).toLowerCase();
+    const type = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' }[ext] || 'application/octet-stream';
+    return new Response(body, { headers: { 'content-type': type } });
+  }
   const rel = (u.pathname === '/' || u.pathname === '') ? `${u.hostname}.html` : decodeURIComponent(u.pathname.slice(1));
   const file = path.normalize(path.join(PAGES_DIR, rel));
   if (!file.startsWith(PAGES_DIR + path.sep)) return new Response('Forbidden', { status: 403 });
@@ -354,6 +364,7 @@ function pushState(w) {
     media: currentMedia && currentMedia.info ? { ...currentMedia.info, sourceTitle: currentMedia.label } : null,
     vrActive,
     uiScale: settings.data.uiScale,
+    split: splitInfo(w),
     vpn: vpn ? vpn.info() : null,
     maximized: w.win.isMaximized(),
   });
@@ -374,7 +385,20 @@ function layout(w) {
   const panelOpen = !w.htmlFullscreen && w.panelApp && w.panelViews.has(w.panelApp);
   const panelW = panelOpen ? Math.min(settings.data.sidebarWidth, Math.max(0, width - x - w.railW - 320)) : 0;
   const right = w.htmlFullscreen ? 0 : w.railW + panelW;
-  for (const t of w.tabs) t.view.setBounds({ x, y, width: Math.max(0, width - x - right), height: Math.max(0, height - y) });
+  const areaW = Math.max(0, width - x - right), areaH = Math.max(0, height - y);
+  const sp = splitShowing(w);
+  w.splitGeom = null;
+  for (const t of w.tabs) {
+    if (sp && (t.id === sp.a || t.id === sp.b)) {
+      const leftW = Math.round((areaW - SPLIT_GAP) * sp.ratio);
+      const isA = t.id === sp.a;
+      t.view.setBounds(isA ? { x, y, width: leftW, height: areaH } : { x: x + leftW + SPLIT_GAP, y, width: Math.max(0, areaW - leftW - SPLIT_GAP), height: areaH });
+      if (isA) w.splitGeom = { x0: x, w: areaW, y, h: areaH, divX: x + leftW, leftW };
+    } else {
+      t.view.setBounds({ x, y, width: areaW, height: areaH });
+    }
+    t.view.setVisible(t.id === w.activeId || !!(sp && (t.id === sp.a || t.id === sp.b)));
+  }
   for (const [id, v] of w.panelViews) {
     const show = panelOpen && id === w.panelApp;
     v.setVisible(show);
@@ -424,7 +448,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   }
   const w = {
     id: nextWinId++, incognito, tabs: [], activeId: null, closedTabs: [],
-    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
+    pageX: 0, pageY: 84, railW: 0, panelApp: null, panelViews: new Map(), split: null, overlayOpen: false, htmlFullscreen: false, userFullscreen: false, stateQueued: false,
   };
   w.win = new BaseWindow(opts);
   windows.add(w);
@@ -480,7 +504,12 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
   });
   w.win.on('closed', () => {
     for (const t of w.tabs) { try { t.view.webContents.close(); } catch {} }
-    for (const v of w.panelViews.values()) { try { v.webContents.close(); } catch {} }
+    for (const [id, v] of w.panelViews) {
+      // Discord keeps running (moves to another window) so its notifications keep coming.
+      const other = id === discordAppId() && !quitting && [...windows].find(o => o !== w && !o.incognito);
+      if (other && !other.panelViews.has(id)) { other.panelViews.set(id, v); other.win.contentView.addChildView(v); layout(other); continue; }
+      try { v.webContents.close(); } catch {}
+    }
     if (currentMedia && currentMedia.w === w) currentMedia = null;
     try { w.ui.webContents.close(); } catch {}
     w.tabs = [];
@@ -587,7 +616,11 @@ function wireTab(tab) {
     saveSession();
   });
   // Clicking into the page ends any address-bar editing, so the bar shows where you really are.
-  wc.on('focus', () => { if (tab.w && tab.w.activeId === tab.id && !tab.popped) uiSend(tab.w, 'blur-address'); });
+  wc.on('focus', () => {
+    if (!tab.w || tab.popped) return;
+    if (tab.w.activeId !== tab.id && sameSplit(tab.w, tab.w.activeId, tab.id) && splitShowing(tab.w)) switchTab(tab.w, tab.id); // clicked the other pane
+    if (tab.w.activeId === tab.id) uiSend(tab.w, 'blur-address');
+  });
   wc.on('page-favicon-updated', (_e, favicons) => {
     tab.favicon = favicons[0] || null;
     const b = bookmarks.data.items.find(x => x.url === wc.getURL());
@@ -670,13 +703,13 @@ function switchTab(w, id) {
   const prevTab = activeTab(w);
   if (prevTab && prevTab.id !== id) {
     prevTab.lastActive = Date.now();
-    if (settings.data.autoPip && isYouTube(tabUrl(prevTab)) && prevTab.view.webContents.isCurrentlyAudible()) pipEnter(prevTab.view.webContents);
+    if (settings.data.autoPip && !sameSplit(w, prevTab.id, id) && isYouTube(tabUrl(prevTab)) && prevTab.view.webContents.isCurrentlyAudible()) pipEnter(prevTab.view.webContents);
   }
   if (prevTab && prevTab.id !== id && isYouTube(tabUrl(t))) pipExit(t.view.webContents);
   w.activeId = id;
   t.lastActive = Date.now();
   if (t.sleeping) wakeTab(t);
-  for (const x of w.tabs) x.view.setVisible(x.id === id);
+  layout(w); // shows this tab (and its split-view partner)
   if (extensions && !w.incognito) { try { extensions.selectTab(t.view.webContents); } catch {} }
   if (!w.overlayOpen) t.view.webContents.focus();
   sendState(w);
@@ -687,6 +720,7 @@ function closeTab(id) {
   const t = getTab(id);
   if (!t) return;
   const w = t.w;
+  if (w.split && (w.split.a === id || w.split.b === id)) w.split = null;
   const idx = w.tabs.indexOf(t);
   w.tabs.splice(idx, 1);
   const url = tabUrl(t);
@@ -1686,6 +1720,61 @@ function openBitwarden(w) {
   uiSend(w, 'open-extension', BITWARDEN_ID);
 }
 
+let discordLite = null;
+function dlNotify(title, body, onClick) {
+  try {
+    const n = new Notification({ title, body, icon: path.join(__dirname, 'discord-lite', '128x128.png'), silent: false });
+    n.on('click', () => { (onClick || showDiscord)(); });
+    n.show();
+  } catch (e) { log('notification failed', e.message); }
+}
+
+// ---------- split view: two tabs side by side ----------
+
+const SPLIT_GAP = 6;
+function splitShowing(w) {
+  const sp = w && w.split;
+  if (!sp || w.htmlFullscreen) return null;
+  if (w.activeId !== sp.a && w.activeId !== sp.b) return null;
+  if (!w.tabs.some(t => t.id === sp.a) || !w.tabs.some(t => t.id === sp.b)) { w.split = null; return null; }
+  return sp;
+}
+function sameSplit(w, a, b) { const sp = w.split; return !!sp && [sp.a, sp.b].includes(a) && [sp.a, sp.b].includes(b); }
+
+function startSplit(w, leftId, rightId) {
+  const l = w.tabs.find(t => t.id === leftId);
+  if (!l) return;
+  let r = rightId != null ? w.tabs.find(t => t.id === rightId) : null;
+  if (!r) r = createTab(w, homeUrl(), { activate: false, openerId: l.id });
+  if (r.id === l.id) return;
+  // Keep the pair next to each other in the tab strip.
+  w.tabs.splice(w.tabs.indexOf(r), 1);
+  w.tabs.splice(w.tabs.indexOf(l) + 1, 0, r);
+  w.split = { a: l.id, b: r.id, ratio: 0.5 };
+  if (r.sleeping) wakeTab(r);
+  if (r.lazyUrl) switchTab(w, r.id);
+  switchTab(w, rightId == null ? r.id : l.id);
+  if (rightId == null) focusAddress(w);
+}
+function endSplit(w) { if (w.split) { w.split = null; layout(w); sendState(w); } }
+function swapSplit(w) { if (w.split) { const { a, b } = w.split; w.split = { ...w.split, a: b, b: a, ratio: 1 - w.split.ratio }; layout(w); sendState(w); } }
+function toggleSplit(w) {
+  if (w.split && splitShowing(w)) return endSplit(w);
+  const t = activeTab(w);
+  if (!t) return;
+  // Pair with the tab you used before this one, or a new tab.
+  const other = w.tabs.filter(x => x.id !== t.id).sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0))[0];
+  startSplit(w, t.id, other ? other.id : null);
+}
+function splitInfo(w) {
+  const sp = splitShowing(w);
+  if (!sp || !w.splitGeom) return w.split ? { a: w.split.a, b: w.split.b, showing: false } : null;
+  const z = (settings.data.uiScale || 100) / 100;
+  const g = w.splitGeom;
+  return { a: sp.a, b: sp.b, showing: true, active: w.activeId === sp.a ? 'a' : 'b',
+    x0: g.x0 / z, w: g.w / z, y: g.y / z, h: g.h / z, divX: g.divX / z, gap: SPLIT_GAP / z, leftW: g.leftW / z };
+}
+
 // ---------- sidebar apps (Discord, YouTube Music, VRChat, …) ----------
 // Each app is a page docked on the right. It stays alive while hidden, so music keeps playing.
 
@@ -1701,11 +1790,18 @@ const SIDEBAR_PRESETS = [
 ];
 
 function panelBadge(w, id) {
+  if (discordLite && settings.data.discordLite && id === discordAppId()) {
+    if (!discordLite.settings.unreadBadge) return 0;
+    return dlBadge.mentions > 0 ? dlBadge.mentions : dlBadge.unread ? -1 : 0;
+  }
   const v = w.panelViews.get(id);
   if (!v || v.webContents.isDestroyed()) return 0;
   const m = /^\((\d+)\)|^[•●] /.exec(v.webContents.getTitle() || '');
   return m ? (m[1] ? Number(m[1]) : -1) : 0; // -1 = "something new"
 }
+
+function isDiscordApp(app) { try { return isDiscordHost(new URL(app.url).hostname); } catch { return false; } }
+function discordAppId() { const a = settings.data.sidebarApps.find(isDiscordApp); return a ? a.id : null; }
 
 function createPanelView(w, app) {
   const v = new WebContentsView({
@@ -1714,11 +1810,18 @@ function createPanelView(w, app) {
   v.setBackgroundColor('#07101b');
   const wc = v.webContents;
   if (vpn) vpn.protectContents(wc, false);
-  wc.setWindowOpenHandler(({ url }) => { createTab(w, cleanUrl(url)); return { action: 'deny' }; });
-  wc.on('before-input-event', (event, input) => { if (handleShortcut(w, input)) event.preventDefault(); });
-  wc.on('page-title-updated', () => sendState(w));
-  wc.on('media-started-playing', () => mediaEvent({ kind: 'panel', w, appId: app.id, wc }, true));
-  wc.on('media-paused', () => mediaEvent({ kind: 'panel', w, appId: app.id, wc }, false));
+  wc.setWindowOpenHandler(({ url }) => { const o = panelOwner(v) || normalWindow(); if (o) { createTab(o, cleanUrl(url)); o.win.focus(); } return { action: 'deny' }; });
+  const lite = isDiscordApp(app) && discordLite && settings.data.discordLite;
+  if (lite) discordLite.attach(wc); // before loading: Discord Lite injects before Discord's code runs
+  // Discord Lite uses Ctrl+Shift+L for its Message Log (instead of Bitwarden) and Ctrl+, for its settings.
+  wc.on('before-input-event', (event, input) => {
+    const k = (input.key || '').toLowerCase();
+    if (lite && input.control && ((input.shift && k === 'l') || (!input.shift && k === ','))) return;
+    if (handleShortcut(panelOwner(v) || w, input)) event.preventDefault();
+  });
+  wc.on('page-title-updated', () => { const o = panelOwner(v); if (o) sendState(o); });
+  wc.on('media-started-playing', () => mediaEvent({ kind: 'panel', w: panelOwner(v) || w, appId: app.id, wc }, true));
+  wc.on('media-paused', () => mediaEvent({ kind: 'panel', w: panelOwner(v) || w, appId: app.id, wc }, false));
   wc.on('context-menu', (_e, p) => {
     Menu.buildFromTemplate([
       { label: 'Back', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
@@ -1728,7 +1831,7 @@ function createPanelView(w, app) {
       ...(p.isEditable ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }] : p.selectionText ? [{ role: 'copy' }] : []),
       { label: 'Open in a tab', click: () => createTab(w, wc.getURL()) },
       { label: 'Inspect', click: () => wc.inspectElement(p.x, p.y) },
-    ]).popup({ window: w.win });
+    ]).popup({ window: discordPop && discordPop.view === v ? discordPop.win : (panelOwner(v) || w).win });
   });
   if (extensions) { addingTab = true; try { extensions.addTab(wc, w.win); } catch {} finally { addingTab = false; } }
   w.win.contentView.addChildView(v);
@@ -1736,11 +1839,29 @@ function createPanelView(w, app) {
   return v;
 }
 
+// Which window a sidebar app's page is in right now (Discord can move between windows).
+function panelOwner(v) { for (const w of windows) for (const x of w.panelViews.values()) if (x === v) return w; return null; }
+
 function togglePanel(w, id) {
   if (w.incognito || !settings.data.sidebarAppsEnabled) return;
   const app = settings.data.sidebarApps.find(a => a.id === id);
   if (!app) return;
+  if (isDiscordApp(app) && discordPop) { discordPop.win.show(); discordPop.win.focus(); return; }
   if (w.panelApp === id) { w.panelApp = null; layout(w); sendState(w); activeTab(w)?.view.webContents.focus(); return; }
+  if (!w.panelViews.has(id) && isDiscordApp(app)) {
+    // There's only one Discord: bring it over from the window it's in.
+    for (const o of windows) {
+      const v = o.panelViews.get(id);
+      if (!v || o === w) continue;
+      o.panelViews.delete(id);
+      if (o.panelApp === id) o.panelApp = null;
+      o.win.contentView.removeChildView(v);
+      layout(o); sendState(o);
+      w.panelViews.set(id, v);
+      w.win.contentView.addChildView(v);
+      break;
+    }
+  }
   if (!w.panelViews.has(id)) w.panelViews.set(id, createPanelView(w, app));
   w.panelApp = id;
   layout(w);
@@ -1749,6 +1870,111 @@ function togglePanel(w, id) {
 }
 
 function closePanel(w) { if (w.panelApp) { w.panelApp = null; layout(w); sendState(w); } }
+
+// Discord running hidden from start-up, so notifications and the logger work straight away.
+function startDiscordInBackground() {
+  const id = discordAppId();
+  if (!id || !settings.data.sidebarAppsEnabled || !discordLite || !discordLite.settings.backgroundStart) return;
+  if (discordPop || [...windows].some(o => o.panelViews.has(id))) return;
+  const w = normalWindow(false);
+  if (!w) return;
+  w.panelViews.set(id, createPanelView(w, settings.data.sidebarApps.find(a => a.id === id)));
+  layout(w);
+}
+
+// Discord in its own window, like the standalone Discord Lite app. Closing it puts Discord
+// back in the sidebar (still running), so notifications keep coming.
+let discordPop = null;
+function popOutDiscord(w) {
+  const id = discordAppId();
+  if (!id || discordPop) return;
+  let owner = [...windows].find(o => o.panelViews.has(id));
+  if (!owner) { togglePanel(w, id); owner = w; togglePanel(w, id); }
+  const v = owner.panelViews.get(id);
+  if (!v) return;
+  owner.panelViews.delete(id);
+  if (owner.panelApp === id) owner.panelApp = null;
+  owner.win.contentView.removeChildView(v);
+  layout(owner); sendState(owner);
+  const b = owner.win.getBounds();
+  const win = new BaseWindow({
+    width: Math.min(1280, b.width), height: Math.min(800, b.height), x: b.x + 40, y: b.y + 40, minWidth: 480, minHeight: 360,
+    title: 'Discord Lite', icon: path.join(__dirname, 'discord-lite', '128x128.png'), backgroundColor: '#07101b', autoHideMenuBar: true,
+  });
+  discordPop = { win, view: v, id };
+  v.setVisible(true);
+  win.contentView.addChildView(v);
+  const fit = () => { const c = win.getContentBounds(); v.setBounds({ x: 0, y: 0, width: c.width, height: c.height }); };
+  fit();
+  win.on('resize', fit);
+  win.on('focus', () => v.webContents.focus());
+  win.on('closed', () => {
+    discordPop = null;
+    if (quitting || v.webContents.isDestroyed()) return;
+    const target = normalWindow(false);
+    if (!target) { try { v.webContents.close(); } catch {} return; }
+    target.panelViews.set(id, v);
+    target.win.contentView.addChildView(v);
+    layout(target); sendStateAll();
+  });
+  setDiscordBadge();
+  sendStateAll();
+}
+
+function discordVisible() {
+  if (discordPop) return discordPop.win.isVisible() && !discordPop.win.isMinimized();
+  const id = discordAppId();
+  return [...windows].some(o => o.panelApp === id && o.win.isVisible() && !o.win.isMinimized());
+}
+function showDiscord() {
+  const id = discordAppId();
+  if (!id) return;
+  if (discordPop) { discordPop.win.show(); discordPop.win.focus(); return; }
+  const w = normalWindow();
+  if (w.panelApp !== id) togglePanel(w, id);
+  if (w.win.isMinimized()) w.win.restore();
+  w.win.focus();
+}
+
+// Unread badge: count on the Discord button, red dot on the taskbar button for mentions.
+let dlBadge = { mentions: 0, unread: false };
+let overlayIcon = null;
+function setDiscordBadge() {
+  if (!overlayIcon) { try { overlayIcon = nativeImage.createFromPath(path.join(__dirname, 'discord-lite', 'overlay-mention.png')); } catch {} }
+  const on = dlBadge.mentions > 0;
+  const text = on ? `${dlBadge.mentions} Discord mention${dlBadge.mentions === 1 ? '' : 's'}` : '';
+  for (const o of windows) if (!o.incognito) { try { o.win.setOverlayIcon(on ? overlayIcon : null, text); } catch {} }
+  if (discordPop) { try { discordPop.win.setOverlayIcon(on ? overlayIcon : null, text); } catch {} }
+}
+
+// Screen sharing (Discord, Meet, …): pick a screen or window.
+function setupScreenShare(sess) {
+  sess.setDisplayMediaRequestHandler(async (request, callback) => {
+    let done = false;
+    const finish = (streams) => { if (done) return; done = true; try { callback(streams); } catch (e) { log('screen share', e.message); } };
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 128, height: 72 } });
+      const owner = BaseWindow.getFocusedWindow() || (currentWindow() && currentWindow().win);
+      const screens = sources.filter(x => x.id.startsWith('screen:'));
+      const wins = sources.filter(x => x.id.startsWith('window:') && x.name && !/^CloudBrowser|— CloudBrowser/.test(x.name));
+      const item = (src, label) => ({
+        label, icon: src.thumbnail && !src.thumbnail.isEmpty() ? src.thumbnail.resize({ width: 64 }) : undefined,
+        click: () => finish({ video: src, ...(request.audioRequested && src.id.startsWith('screen:') ? { audio: 'loopback' } : {}) }),
+      });
+      Menu.buildFromTemplate([
+        { label: 'Choose what to share', enabled: false },
+        { type: 'separator' },
+        ...screens.map((x, i) => item(x, screens.length > 1 ? `Entire screen ${i + 1}` : 'Entire screen (with sound)')),
+        ...(wins.length ? [{ type: 'separator' }, ...wins.slice(0, 20).map(x => item(x, x.name.length > 60 ? x.name.slice(0, 57) + '…' : x.name))] : []),
+        { type: 'separator' },
+        { label: 'Cancel', click: () => finish({}) },
+      ]).popup({ window: owner || undefined, callback: () => setTimeout(() => finish({}), 300) });
+    } catch (e) {
+      log('screen share picker failed', e.message);
+      finish({});
+    }
+  });
+}
 
 function destroyPanel(w, id) {
   const v = w.panelViews.get(id);
@@ -1789,10 +2015,24 @@ function showSidebarAppMenu(w, id) {
   const width = settings.data.sidebarWidth;
   const apps = settings.data.sidebarApps;
   const i = apps.indexOf(app);
+  const lite = isDiscordApp(app) && discordLite && settings.data.discordLite;
+  const dv = v || (discordPop && isDiscordApp(app) ? discordPop.view : null);
   Menu.buildFromTemplate([
-    { label: app.title, enabled: false },
+    { label: lite ? 'Discord Lite' : app.title, enabled: false },
     { type: 'separator' },
-    { label: 'Reload', enabled: !!v, click: () => v.webContents.reload() },
+    ...(lite ? [
+      { label: 'Discord Lite settings', accelerator: 'Ctrl+,', click: () => openInternal(normalWindow(), 'discord-settings') },
+      { label: 'Message log', accelerator: 'Ctrl+Shift+L', click: () => openInternal(normalWindow(), 'discord-log') },
+      { label: discordPop ? 'Back into the sidebar' : 'Open in its own window', click: () => (discordPop ? discordPop.win.close() : popOutDiscord(w)) },
+      { label: 'Reload theme', click: () => discordLite.reloadTheme() },
+      { label: 'Update Vencord (reloads Discord)', click: async () => {
+        try { await discordLite.updateVencord(false); } catch (e) { dlNotify("Couldn't update Vencord", e.message); return; }
+        if (dv) dv.webContents.reload();
+      } },
+      { label: 'Developer tools', enabled: !!dv, click: () => dv.webContents.openDevTools({ mode: 'detach' }) },
+      { type: 'separator' },
+    ] : []),
+    { label: lite ? 'Reload Discord' : 'Reload', enabled: !!dv, click: () => dv.webContents.reload() },
     { label: 'Go to its home page', enabled: !!v, click: () => load(v.webContents, app.url) },
     { label: 'Open in a tab', click: () => createTab(w, v ? v.webContents.getURL() : app.url) },
     { label: 'Close it (stop running)', enabled: !!v, click: () => destroyPanel(w, id) },
@@ -1909,7 +2149,7 @@ function setVrActive(on) {
   log('VR mode', on ? 'on' : 'off');
   if (on) {
     for (const t of allTabs()) {
-      if (t.id !== t.w.activeId && !t.pinned && !t.view.webContents.isCurrentlyAudible()) sleepTab(t);
+      if (!isOnScreen(t) && !t.pinned && !t.view.webContents.isCurrentlyAudible()) sleepTab(t);
     }
   }
   sendStateAll();
@@ -1922,6 +2162,7 @@ function popOutTab(t) {
   const w = t.w;
   const idx = w.tabs.indexOf(t);
   if (idx < 0) return;
+  if (w.split && (w.split.a === t.id || w.split.b === t.id)) w.split = null;
   // Take the page out of the window without reloading it (video keeps playing).
   w.tabs.splice(idx, 1);
   w.win.contentView.removeChildView(t.view);
@@ -2020,12 +2261,13 @@ function sleepTab(t, force = false) {
   return true;
 }
 
+function isOnScreen(t) { const sp = splitShowing(t.w); return t.id === t.w.activeId || !!(sp && (t.id === sp.a || t.id === sp.b)); }
 function sleepIdleTabs() {
   const mins = vrActive ? 2 : settings.data.sleepAfter; // in VR, unused tabs sleep after 2 minutes
   if (!mins) return;
   const cutoff = Date.now() - mins * 60000;
   for (const t of allTabs()) {
-    if (!t.sleeping && t.id !== t.w.activeId && t.lastActive < cutoff) sleepTab(t);
+    if (!t.sleeping && !isOnScreen(t) && t.lastActive < cutoff) sleepTab(t);
   }
 }
 
@@ -2083,6 +2325,8 @@ function handleShortcut(w, input) {
   if (key === 'f9') { if (t && t.readerable) openReader(t); return true; }
   if (ctrl && shift && key === 's') { screenshot(w); return true; }
   if (ctrl && shift && key === 'l') { openBitwarden(w); return true; }
+  if (ctrl && shift && key === 'e') { toggleSplit(w); return true; }
+  if (ctrl && shift && key === 'd') { const id = discordAppId(); if (id && !w.incognito) togglePanel(w, id); return true; }
   if (input.alt && key === 'arrowleft') { wc && wc.navigationHistory.goBack(); return true; }
   if (input.alt && key === 'arrowright') { wc && wc.navigationHistory.goForward(); return true; }
   if (input.alt && key === 'home') { wc && load(wc, homeUrl()); return true; }
@@ -2249,10 +2493,20 @@ function showTabMenu(w, id) {
     { type: 'separator' },
     { label: 'Reload', click: () => wc.reload() },
     { label: 'Duplicate', click: () => createTab(w, tabUrl(t), { openerId: t.id }) },
+    ...(w.split && (w.split.a === t.id || w.split.b === t.id) ? [
+      { label: 'Swap split sides', click: () => swapSplit(w) },
+      { label: 'Close split view', click: () => endSplit(w) },
+    ] : [{
+      label: 'Open in split view', submenu: [
+        { label: 'With a new tab', accelerator: 'Ctrl+Shift+E', click: () => startSplit(w, t.id, null) },
+        ...(w.tabs.length > 1 ? [{ type: 'separator' }] : []),
+        ...w.tabs.filter(x => x.id !== t.id).slice(0, 15).map(x => ({ label: (tabInfo(x).title || tabUrl(x)).slice(0, 50), click: () => startSplit(w, t.id, x.id) })),
+      ],
+    }]),
     { label: 'Pop out (floating, always on top)', click: () => popOutTab(t) },
     ...(settings.data.sidebarAppsEnabled && !w.incognito && /^https?:/.test(tabUrl(t)) ? [{ label: 'Add to sidebar', click: () => addSidebarApp(t.view.webContents.getTitle() || hostOf(tabUrl(t)), tabUrl(t)) }] : []),
     { label: t.pinned ? 'Unpin tab' : 'Pin tab', click: () => togglePin(t) },
-    { label: 'Put tab to sleep', enabled: t.id !== w.activeId && !t.sleeping, click: () => sleepTab(t, true) },
+    { label: 'Put tab to sleep', enabled: !isOnScreen(t) && !t.sleeping, click: () => sleepTab(t, true) },
     { label: 'Move to new window', enabled: w.tabs.length > 1, click: () => { const u = tabUrl(t); closeTab(id); createWindow({ incognito: w.incognito, urls: [u] }); } },
     { label: wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { wc.setAudioMuted(!wc.isAudioMuted()); sendState(w); } },
     { label: isBookmarked(tabUrl(t)) ? 'Remove bookmark' : 'Bookmark tab', click: () => toggleBookmark(t) },
@@ -2312,6 +2566,13 @@ function setSetting(key, value) {
   if (key === 'uiScale') for (const x of windows) applyUiScale(x);
   if (key === 'sidebarWidth') for (const x of windows) layout(x);
   if (key === 'sidebarAppsEnabled' && !value) for (const x of windows) closePanel(x);
+  if (key === 'discordLite') {
+    // Reload Discord so Discord Lite is added or removed.
+    const id = discordAppId();
+    if (discordPop) { const v = discordPop.view; discordPop.win.removeAllListeners('closed'); discordPop.win.close(); discordPop = null; try { v.webContents.close(); } catch {} }
+    for (const x of windows) { const v = id && x.panelViews.get(id); if (v) destroyPanel(x, id); }
+    if (value && discordLite && !discordLite.started) discordLite.start().catch(() => {});
+  }
   if (key === 'vrMode') checkVr();
   if (key === 'incognitoScreenProtection') for (const x of windows) if (x.incognito) x.win.setContentProtection(value);
   sendStateAll();
@@ -2427,6 +2688,17 @@ uiOn('store-remove', async (w, id) => { await removeExtension(id); sendStateAll(
 uiOn('shield-menu', w => showShieldMenu(w));
 uiOn('translate-menu', w => showTranslateMenu(w));
 uiOn('sidebar-app', (w, id) => togglePanel(w, id));
+uiOn('split-toggle', w => toggleSplit(w));
+uiOn('split-ratio', (w, r) => { r = Number(r); if (w.split && r >= 0.15 && r <= 0.85) { w.split.ratio = r; layout(w); sendState(w); } });
+uiOn('split-menu', w => {
+  if (!w.split) return;
+  Menu.buildFromTemplate([
+    { label: 'Swap sides', click: () => swapSplit(w) },
+    { label: 'Equal sizes', click: () => { w.split.ratio = 0.5; layout(w); sendState(w); } },
+    { type: 'separator' },
+    { label: 'Close split view', click: () => endSplit(w) },
+  ]).popup({ window: w.win });
+});
 uiOn('sidebar-app-menu', (w, id) => showSidebarAppMenu(w, id));
 uiOn('sidebar-add-menu', w => showSidebarAddMenu(w));
 uiOn('media', (w, action) => mediaAction(w, action));
@@ -2484,6 +2756,15 @@ uiOn('focus-page', w => activeTab(w)?.view.webContents.focus());
 uiOn('make-default', () => makeDefaultBrowser());
 uiOn('dismiss-default', () => { settings.data.defaultPromptDismissed = true; settings.save(); sendStateAll(); });
 ipcMain.handle('ui:vpn', () => (vpn ? vpn.info() : null));
+// Discord Lite: the scripts injected into the Discord sidebar app, and its invoke() commands.
+ipcMain.on('dl-bundle', (e) => {
+  try { e.returnValue = discordLite && settings.data.discordLite && discordLite.isView(e.sender) ? discordLite.bundle() : null; }
+  catch (err) { log('discord-lite bundle failed', err.message); e.returnValue = null; }
+});
+ipcMain.handle('dl-invoke', (e, cmd, args) => {
+  if (!discordLite || !discordLite.isView(e.sender)) throw new Error('Not allowed');
+  return discordLite.invoke(cmd, args);
+});
 // SponsorBlock: ask with a 4-character hash prefix so the server can't tell which video it is.
 const sbCache = new Map();
 ipcMain.handle('yt-segments', async (e, videoId, categories) => {
@@ -2637,6 +2918,10 @@ pageHandle('install-update', () => { autoUpdater && autoUpdater.quitAndInstall()
 pageHandle('open-downloads-folder', () => { shell.openPath(app.getPath('downloads')); return true; });
 pageHandle('make-default', async () => { await makeDefaultBrowser(); return true; });
 pageHandle('extensions', () => listExtensions());
+pageHandle('dl', (_ctx, cmd, args) => {
+  if (!discordLite) throw new Error('Discord Lite is off');
+  return discordLite.invoke(String(cmd), args);
+});
 pageHandle('set-sponsor-categories', (_ctx, cats) => {
   const ok = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic', 'filler'];
   settings.data.sponsorCategories = (Array.isArray(cats) ? cats : []).filter(c => ok.includes(c));
@@ -2744,6 +3029,23 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     await vpn.applyKillSwitch(); // nothing loads outside the VPN if it's switched on
     if (settings.data.vpnEnabled) vpn.ensure();
     setupPrivacyHeaders();
+    for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) setupScreenShare(session.fromPartition(p));
+    discordLite = new DiscordLite({
+      app, log, session: () => session.fromPartition(NORMAL_PARTITION),
+      notify: dlNotify,
+      openUrl: (url) => { const w = normalWindow(); createTab(w, cleanUrl(url)); w.win.focus(); },
+      openPage: (page) => { const w = normalWindow(); openInternal(w, page); w.win.show(); w.win.focus(); },
+      showDiscord,
+      onBadge: (mentions, unread, isNew) => {
+        dlBadge = { mentions, unread };
+        setDiscordBadge();
+        sendStateAll();
+        if (isNew && !BaseWindow.getFocusedWindow()) { const w = normalWindow(false); if (w) w.win.flashFrame(true); }
+      },
+      discordVisible,
+      anyWindowFocused: () => !!BaseWindow.getFocusedWindow(),
+    });
+    if (settings.data.discordLite) discordLite.start().catch(e => log('discord-lite start failed', e.message));
     setInterval(sleepIdleTabs, 60 * 1000);
     setInterval(checkVr, 15 * 1000);
     setTimeout(checkVr, 4000);
@@ -2754,9 +3056,11 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     setupUpdater();
     setupAdblock();
     registerAsBrowser().then(() => checkDefaultBrowser(true));
+    setTimeout(() => { if (settings.data.discordLite) startDiscordInBackground(); }, SMOKE ? 600000 : 6000);
     if (SMOKE) setTimeout(smokeTest, 1500);
   });
 
+  app.on('will-quit', () => { if (discordLite) discordLite.stop(); });
   app.on('before-quit', (e) => {
     if (!quitting) { quitting = true; saveSession(true); }
     if (settings && settings.data.clearOnExit && !clearedOnExit) {
@@ -3009,6 +3313,115 @@ async function smokeTest() {
     fakeVr = false; checkVr();
     await wait(2000);
     S('vr: off again', !vrActive, 'page rect', w.pageX, w.pageY);
+  });
+
+  await step('split view', async () => {
+    const left = activeTab(w);
+    load(left.view.webContents, 'https://example.com/');
+    const right = createTab(w, 'https://en.wikipedia.org/wiki/Cloud');
+    await wait(3000);
+    switchTab(w, left.id);
+    toggleSplit(w);
+    await wait(1500);
+    const sp = splitInfo(w);
+    S('split: pair', JSON.stringify(w.split), '| left', JSON.stringify(left.view.getBounds()), '| right', JSON.stringify(right.view.getBounds()),
+      '| both visible', left.view.getVisible ? left.view.getVisible() + ',' + right.view.getVisible() : '?', '| ui divider shown', await ui(w, `!document.getElementById('split-divider').hidden`));
+    await screen('split-view');
+    // Click into the other pane: it becomes the active one (address bar follows).
+    const other = w.activeId === left.id ? right : left;
+    other.view.webContents.focus();
+    await wait(800);
+    S('split: clicking the other pane makes it active', w.activeId === other.id, '| address bar', await ui(w, `document.getElementById('address').value`));
+    // Drag the divider with the real mouse.
+    const cb = w.win.getContentBounds();
+    const g = w.splitGeom;
+    const before = w.split.ratio;
+    await realDrag(cb.x + g.divX + 3, cb.y + g.y + Math.round(g.h / 2), -180, 0);
+    await wait(800);
+    S('split: dragged divider, ratio', before, '→', w.split && w.split.ratio.toFixed(2), '| overlay down again', !w.overlayOpen);
+    await screen('split-resized');
+    // A tab outside the pair shows on its own; going back shows the pair again.
+    const third = createTab(w, 'https://example.org/');
+    await wait(1500);
+    S('split: third tab alone', !splitShowing(w), '| pair hidden', (left.view.getVisible ? !left.view.getVisible() && !right.view.getVisible() : '?'));
+    switchTab(w, left.id);
+    await wait(500);
+    S('split: back to the pair', !!splitShowing(w));
+    closeTab(third.id);
+    toggleSplit(w);
+    await wait(500);
+    S('split: closed', !w.split, '| full width again', left.view.getBounds().width);
+    closeTab(right.id);
+  });
+
+  await step('discord lite', async () => {
+    const id = discordAppId();
+    togglePanel(w, id);
+    const v = w.panelViews.get(id);
+    const dwc = v.webContents;
+    await waitFor(() => !dwc.isLoading(), 30000);
+    await wait(8000);
+    const dj = (code) => Promise.race([dwc.executeJavaScript(code, true), wait(10000).then(() => 'TIMEOUT')]).catch(e => 'ERR ' + e.message);
+    S('discord lite: page', dwc.getURL().slice(0, 50), '| vencord file', fs.existsSync(path.join(discordLite.vencordDir, 'browser.js')));
+    S('discord lite: in page', await dj(`JSON.stringify({ vencord: typeof window.Vencord, plugins: window.Vencord && window.Vencord.Plugins ? Object.keys(window.Vencord.Plugins.plugins || {}).length : 0,
+      settings: !!window.__DL_SETTINGS, theme: !!document.getElementById('discord-lite-theme'), lite: !!document.getElementById('discord-lite-lite-mode'),
+      vencordCss: !!document.getElementById('vencord-css'), bridge: typeof window.__TAURI_INTERNALS__, notif: Notification.permission, ptt: typeof window.__dlPTT, toast: typeof window.__dlToast })`));
+    S('discord lite: invoke round trip', await dj(`window.__TAURI_INTERNALS__.invoke('dl_get_settings').then(s => 'liteMode=' + s.liteMode + ' theme=' + s.theme)`));
+    await screen('discord-lite');
+    // Unread badge from the plugin's command.
+    await dj(`window.__TAURI_INTERNALS__.invoke('dl_set_unread', { mentions: 3, unread: true })`);
+    await wait(800);
+    S('discord lite: badge', JSON.stringify(dlBadge), '| rail badge', await ui(w, `(document.querySelector('.rail-btn.app .rail-badge') || {}).textContent`));
+    S('discord lite: notification', await dj(`window.__TAURI_INTERNALS__.invoke('dl_notify', { title: 'CloudBrowser test', body: 'Discord Lite notifications work' }).then(() => 'sent')`));
+    // Message Logger+: write an entry like the plugin does, then look at it in the viewer.
+    const now = new Date(); const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    S('discord lite: ml_log', await dj(`window.__TAURI_INTERNALS__.invoke('ml_log', { entry: { kind: 'DELETED', date: '${today}', logged_at: new Date().toISOString(), sent_at: new Date().toISOString(), where: 'Test server › #general', guild_id: '1', channel_id: '2', message_id: '3', author: { id: '4', username: 'tester', global_name: 'Tester' }, content: 'this message was deleted', attachments: [], text: '[test] DELETED in Test server by Tester' }, ids: [] }).then(() => 'ok')`));
+    openInternal(w, 'discord-log');
+    await wait(3000);
+    const lt = activeTab(w);
+    S('discord lite: log viewer', tabUrl(lt), '|', JSON.stringify((await lt.view.webContents.executeJavaScript('document.body.innerText').catch(e => e.message)).slice(0, 200)));
+    await screen('discord-log');
+    openInternal(w, 'discord-settings');
+    await wait(2500);
+    const st = activeTab(w);
+    S('discord lite: settings page', JSON.stringify((await st.view.webContents.executeJavaScript('document.body.innerText').catch(e => e.message)).slice(0, 160)));
+    await screen('discord-settings');
+    closeTab(st.id); closeTab(lt.id);
+    // Global push-to-talk: press F13 for real and see Discord hear it.
+    await dj(`window.__pttLog = []; const o = window.__dlPTT; window.__dlPTT = p => { window.__pttLog.push(p); o && o(p); }; 1`);
+    try { await discordLite.saveFromPage({ ...discordLite.settings, ptt: { enabled: true, key: 'F13', releaseDelayMs: 150 } }); S('ptt: hook started', !!discordLite.pttHook); }
+    catch (e) { S('ptt: failed', e.message); }
+    await powershell(`Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, UIntPtr e); }'; [K]::keybd_event(0x7C,0,0,[UIntPtr]::Zero); Start-Sleep -m 300; [K]::keybd_event(0x7C,0,2,[UIntPtr]::Zero); 'ok'`);
+    await wait(800);
+    S('ptt: Discord got', await dj(`JSON.stringify(window.__pttLog)`));
+    await discordLite.saveFromPage({ ...discordLite.settings, ptt: { enabled: false, key: 'F13', releaseDelayMs: 150 } }).catch(() => {});
+    // An ordinary discord.com tab stays plain.
+    const plain = createTab(w, 'https://discord.com/login');
+    await waitFor(() => !plain.view.webContents.isLoading(), 20000);
+    await wait(2000);
+    S('discord lite: plain tab untouched', await plain.view.webContents.executeJavaScript(`typeof window.Vencord + ' ' + typeof window.__TAURI_INTERNALS__`).catch(e => e.message));
+    closeTab(plain.id);
+    // Its own window and back.
+    popOutDiscord(w);
+    await wait(2000);
+    S('discord lite: own window', !!discordPop, discordPop && discordPop.win.getTitle());
+    await screen('discord-own-window');
+    if (discordPop) discordPop.win.close();
+    await wait(1500);
+    S('discord lite: back in sidebar', [...windows].some(o => o.panelViews.has(id)), '| still the same page', !dwc.isDestroyed());
+    if (w.panelApp === id) togglePanel(w, id);
+  });
+
+  await step('screen share picker', async () => {
+    const wc = activeTab(w).view.webContents;
+    load(wc, 'https://example.com/');
+    await waitFor(() => !wc.isLoading(), 10000);
+    const p = wc.executeJavaScript(`navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(s => 'got ' + s.getTracks().map(t => t.kind + ':' + t.label).join(', ')).catch(e => 'error ' + e.name + ' ' + e.message)`, true);
+    await wait(2500);
+    await screen('screen-share-picker');
+    await powershell(`$w = New-Object -ComObject WScript.Shell; $w.SendKeys('{DOWN}'); Start-Sleep -m 300; $w.SendKeys('{ENTER}'); 'ok'`);
+    S('screen share:', await Promise.race([p, wait(10000).then(() => 'TIMEOUT')]));
+    await wc.executeJavaScript(`1`).catch(() => {});
   });
 
   await step('netflix / disney+ (widevine)', async () => {

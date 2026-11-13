@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message Log</title>
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg-0: #07101b; --bg-1: #0b1522; --bg-2: #0e1926; --bg-3: #13202f;
+    --hl: rgba(255,255,255,.05); --hl2: rgba(255,255,255,.09); --border: rgba(255,255,255,.08);
+    --text: #e8edf3; --strong: #fff; --muted: #9aa7b6; --faint: #64748a;
+    --accent: #4d8dff; --red: #f2555a; --amber: #f0b232; --green: #3ba55d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg-0: #eef1f5; --bg-1: #f6f8fa; --bg-2: #fff; --bg-3: #f2f4f7;
+      --hl: rgba(7,16,27,.04); --hl2: rgba(7,16,27,.07); --border: rgba(7,16,27,.09);
+      --text: #1a2230; --strong: #000; --muted: #556274; --faint: #8d98a7;
+      --accent: #2f6fe4; --red: #d83c3e; --amber: #b07800; --green: #2d8a4e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg-2); color: var(--text);
+    font: 14px/20px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    background: var(--bg-1); border-bottom: 1px solid var(--border);
+    padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; }
+  h1 { font-size: 16px; font-weight: 500; margin: 0; flex: 1; color: var(--strong); }
+  select, input[type=search] {
+    background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 12px; padding: 8px 12px; font: inherit; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+  input[type=search] { flex: 1; min-width: 0; }
+  button {
+    font: inherit; font-weight: 500; cursor: pointer; border: none;
+    background: var(--hl); color: var(--text); border-radius: 8px; padding: 6px 12px;
+  }
+  button:hover { background: var(--hl2); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    border-radius: 9999px; padding: 4px 12px; background: transparent;
+    border: 1px solid var(--border); color: var(--muted); font-size: 13px;
+  }
+  .chip.on { background: var(--text); color: var(--bg-0); border-color: var(--text); }
+  .chip .n { opacity: .65; margin-left: 4px; }
+  main { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+  .entry {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }
+  .meta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tag {
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    padding: 1px 8px; border-radius: 9999px;
+  }
+  .tag.DELETED { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+  .tag.EDITED { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
+  .tag.GHOST { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .author { font-weight: 500; color: var(--strong); }
+  .time { color: var(--faint); font-size: 12px; margin-left: auto; }
+  .where { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .content { margin-top: 8px; white-space: pre-wrap; word-wrap: break-word; }
+  .content.empty { color: var(--faint); font-style: italic; }
+  .before { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 60%, transparent); }
+  .after::before { content: "→ "; color: var(--faint); }
+  .how { color: var(--faint); font-size: 12px; margin-top: 4px; }
+  .atts { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; margin-top: 10px; }
+  .atts img, .atts video {
+    max-width: 220px; max-height: 180px; border-radius: 8px; display: block;
+    background: var(--bg-3); cursor: zoom-in;
+  }
+  .missing {
+    font-size: 12px; color: var(--faint); border: 1px dashed var(--border);
+    border-radius: 8px; padding: 6px 10px;
+  }
+  .empty-state { text-align: center; color: var(--muted); margin-top: 80px; }
+  .empty-state b { display: block; color: var(--text); font-weight: 500; font-size: 16px; margin-bottom: 4px; }
+  #zoom {
+    position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none;
+    align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;
+  }
+  #zoom.open { display: flex; }
+  #zoom img, #zoom video { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--hl2); border-radius: 9999px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Message Log</h1>
+    <select id="day" title="Day"></select>
+    <button id="folder" title="Open the log folder">Folder</button>
+  </div>
+  <div class="row">
+    <input id="q" type="search" placeholder="Search messages, people, channels…">
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+<main id="list"></main>
+<div id="zoom"></div>
+
+<script>
+(() => {
+  const invoke = (c, a) => window.cloud.call('dl', c, a || null);
+  const fileUrl = name => "cloud://discord-log/file/" + encodeURIComponent(name);
+
+  const $ = id => document.getElementById(id);
+  const KINDS = [["all", "All"], ["DELETED", "Deleted"], ["EDITED", "Edited"], ["GHOST PING", "Ghost pings"]];
+  let entries = [], kind = "all", lastKey = "";
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function renderChips() {
+    const chips = $("chips");
+    chips.textContent = "";
+    for (const [k, label] of KINDS) {
+      const n = k === "all" ? entries.length : entries.filter(e => e.kind === k).length;
+      const b = el("button", "chip" + (k === kind ? " on" : ""), label);
+      b.append(el("span", "n", String(n)));
+      b.onclick = () => { kind = k; render(); };
+      chips.append(b);
+    }
+  }
+
+  function media(a) {
+    const isVideo = /^video\//.test(a.content_type) || /\.(mp4|webm|mov)$/i.test(a.file);
+    const m = document.createElement(isVideo ? "video" : "img");
+    m.src = fileUrl(a.file);
+    if (isVideo) { m.muted = true; m.preload = "metadata"; } else { m.loading = "lazy"; m.alt = a.filename; }
+    m.onclick = () => {
+      const z = $("zoom");
+      z.textContent = "";
+      const big = document.createElement(isVideo ? "video" : "img");
+      big.src = m.src;
+      if (isVideo) { big.controls = true; big.autoplay = true; }
+      big.onclick = e => e.stopPropagation();
+      z.append(big);
+      z.classList.add("open");
+    };
+    return m;
+  }
+
+  function card(e) {
+    const c = el("div", "entry");
+    const meta = el("div", "meta");
+    const tagCls = e.kind === "GHOST PING" ? "GHOST" : e.kind;
+    meta.append(el("span", "tag " + tagCls, e.kind === "GHOST PING" ? "Ghost ping" : e.kind.toLowerCase()));
+    const a = e.author || {};
+    meta.append(el("span", "author", a.global_name || a.username || "Unknown"));
+    if (a.global_name && a.username) meta.append(el("span", "where", "@" + a.username));
+    const t = new Date(e.logged_at);
+    meta.append(el("span", "time", isNaN(t) ? "" : t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })));
+    c.append(meta, el("div", "where", e.where || ""));
+
+    if (e.kind === "EDITED") {
+      c.append(el("div", "content before", e.before || ""), el("div", "content after", e.after || ""));
+    } else {
+      const txt = e.content || "";
+      c.append(el("div", "content" + (txt ? "" : " empty"), txt || "(no text)"));
+    }
+    if (e.how) c.append(el("div", "how", e.how));
+
+    const atts = e.attachments || [];
+    if (atts.length) {
+      const box = el("div", "atts");
+      for (const at of atts) {
+        if (at.file) box.append(media(at));
+        else box.append(el("div", "missing", "📎 " + (at.filename || "file") + " (not saved)"));
+      }
+      c.append(box);
+    }
+    return c;
+  }
+
+  function render() {
+    renderChips();
+    const q = $("q").value.trim().toLowerCase();
+    const list = $("list");
+    list.textContent = "";
+    const shown = entries.filter(e => {
+      if (kind !== "all" && e.kind !== kind) return false;
+      if (!q) return true;
+      const a = e.author || {};
+      return [e.content, e.before, e.after, e.where, a.username, a.global_name]
+        .some(s => (s || "").toLowerCase().includes(q));
+    });
+    if (!shown.length) {
+      const s = el("div", "empty-state");
+      s.append(el("b", null, entries.length ? "No matches" : "Nothing logged yet"),
+        el("span", null, entries.length ? "Try a different search or filter."
+          : "Deleted and edited messages will show up here as they happen."));
+      list.append(s);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const e of shown) frag.append(card(e));
+    list.append(frag);
+  }
+
+  async function loadDays() {
+    const days = await invoke("ml_list_days");
+    const sel = $("day");
+    const keep = sel.value;
+    const today = new Date();
+    const p = n => String(n).padStart(2, "0");
+    const todayKey = `${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}`;
+    if (!days.includes(todayKey)) days.unshift(todayKey);
+    sel.textContent = "";
+    for (const d of days) {
+      const o = el("option", null, d === todayKey ? "Today" : new Date(d + "T12:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" }));
+      o.value = d;
+      sel.append(o);
+    }
+    sel.value = days.includes(keep) ? keep : todayKey;
+  }
+
+  async function loadEntries(force) {
+    const data = await invoke("ml_read_day", { date: $("day").value });
+    const key = data.length + ":" + (data[0]?.logged_at || "");
+    if (!force && key === lastKey) return; // nothing new: keep scroll position
+    lastKey = key;
+    entries = data;
+    render();
+  }
+
+  $("day").onchange = () => loadEntries(true);
+  $("q").oninput = render;
+  $("folder").onclick = () => invoke("ml_open_folder");
+  $("zoom").onclick = () => { $("zoom").classList.remove("open"); $("zoom").textContent = ""; };
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("zoom").click(); });
+
+  (async () => {
+    await loadDays();
+    await loadEntries(true);
+    // Live updates while the window is open.
+    setInterval(() => { if (!document.hidden) loadEntries(false).catch(() => {}); }, 2000);
+  })().catch(err => {
+    $("list").textContent = "Couldn't load the log: " + err;
+  });
+})();
+</script>
+</body>
+</html>

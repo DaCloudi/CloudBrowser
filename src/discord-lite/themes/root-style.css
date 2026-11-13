@@ -1,0 +1,1047 @@
+/*
+  Root Style 2.4: a full Root-style overhaul for Discord Lite
+  -------------------------------------------------------------
+  Built from Root's published design system: deep navy backdrop with
+  separate rounded panels, white "pill" buttons, 12px cards and inputs,
+  8px list items, small uppercase group labels, underlined tabs, quiet
+  highlight overlays and the system font.
+
+  Follows Discord's own Appearance setting: Dark (the classic Root look) or Light.
+
+  Built into Discord Lite: pick it in Settings > Appearance > Theme.
+  To customise it, copy this file into theme.css and pick "Custom (theme.css)".
+  Tweak --cl-accent and --cl-gap below.
+*/
+
+/* ========== Palette: dark (Root's #07101B navy) ========== */
+.theme-dark, .theme-darker, .theme-midnight {
+  --cl-accent: #4d8dff;
+  --cl-accent-hover: #6ea2ff;
+
+  --cl-bg-0: #07101b;   /* backdrop behind the panels: Root's base background */
+  --cl-bg-1: #0c1624;   /* side panels: channels, members, user panel */
+  --cl-bg-2: #0f1a28;   /* chat panel */
+  --cl-bg-3: #152233;   /* inputs, cards, menus, popouts */
+  --cl-hover: rgba(255, 255, 255, 0.05);     /* highlight-light */
+  --cl-selected: rgba(255, 255, 255, 0.09);  /* highlight-normal */
+  --cl-strong: rgba(255, 255, 255, 0.13);    /* highlight-strong */
+  --cl-border: rgba(255, 255, 255, 0.07);
+
+  --cl-text: #e8edf3;
+  --cl-text-strong: #ffffff;
+  --cl-text-muted: #9aa7b6;
+  --cl-text-faint: #64748a;
+}
+
+/* ========== Palette: light ========== */
+.theme-light {
+  --cl-accent: #2f6fe4;
+  --cl-accent-hover: #255bc0;
+
+  --cl-bg-0: #e9edf2;
+  --cl-bg-1: #f5f7fa;
+  --cl-bg-2: #ffffff;
+  --cl-bg-3: #f0f2f5;
+  --cl-hover: rgba(7, 16, 27, 0.04);
+  --cl-selected: rgba(7, 16, 27, 0.07);
+  --cl-strong: rgba(7, 16, 27, 0.11);
+  --cl-border: rgba(7, 16, 27, 0.08);
+
+  --cl-text: #1a2230;
+  --cl-text-strong: #000000;
+  --cl-text-muted: #556274;
+  --cl-text-faint: #8d98a7;
+}
+
+.theme-dark, .theme-darker, .theme-midnight, .theme-light {
+  --cl-radius-sm: 6px;   /* icon buttons */
+  --cl-radius-md: 8px;   /* list items, menus, tags */
+  --cl-radius-lg: 12px;  /* panels, cards, inputs */
+  --cl-gap: 4px;         /* half the space between panels */
+}
+
+/* ========== Map the palette onto Discord's variables ========== */
+/* Both the current (refreshed) names and the older names are set,
+   so it keeps working as Discord renames things. */
+.theme-dark, .theme-darker, .theme-midnight, .theme-light {
+  /* Surfaces: current names */
+  --background-base-lowest: var(--cl-bg-0) !important;
+  --background-base-lower: var(--cl-bg-0) !important;
+  --background-base-low: var(--cl-bg-0) !important;
+  --background-surface-high: var(--cl-bg-3) !important;
+  --background-surface-higher: var(--cl-bg-3) !important;
+  --background-surface-highest: var(--cl-bg-3) !important;
+  --chat-background-default: var(--cl-bg-2) !important;
+  --background-mentioned: color-mix(in srgb, var(--cl-accent) 10%, transparent) !important;
+  --background-mentioned-hover: color-mix(in srgb, var(--cl-accent) 14%, transparent) !important;
+  --info-warning-foreground: var(--cl-accent) !important;
+  --background-mod-subtle: var(--cl-hover) !important;
+  --background-mod-normal: var(--cl-selected) !important;
+  --background-mod-strong: var(--cl-strong) !important;
+  --border-subtle: var(--cl-border) !important;
+  --border-normal: var(--cl-border) !important;
+  --border-faint: var(--cl-border) !important;
+
+  /* Surfaces: older names */
+  --background-primary: var(--cl-bg-2) !important;
+  --background-secondary: var(--cl-bg-1) !important;
+  --background-secondary-alt: var(--cl-bg-1) !important;
+  --background-tertiary: var(--cl-bg-0) !important;
+  --background-floating: var(--cl-bg-3) !important;
+  --background-nested-floating: var(--cl-bg-3) !important;
+  --modal-background: var(--cl-bg-2) !important;
+  --modal-footer-background: var(--cl-bg-1) !important;
+  --channeltextarea-background: var(--cl-bg-3) !important;
+  --background-message-hover: var(--cl-hover) !important;
+  --background-modifier-hover: var(--cl-hover) !important;
+  --background-modifier-selected: var(--cl-selected) !important;
+  --background-modifier-active: var(--cl-strong) !important;
+  --background-modifier-accent: var(--cl-border) !important;
+  --bg-base-primary: var(--cl-bg-2) !important;
+  --bg-base-secondary: var(--cl-bg-1) !important;
+  --bg-base-tertiary: var(--cl-bg-0) !important;
+
+  /* Text */
+  --text-default: var(--cl-text) !important;
+  --text-normal: var(--cl-text) !important;
+  --text-strong: var(--cl-text-strong) !important;
+  --header-primary: var(--cl-text-strong) !important;
+  --header-secondary: var(--cl-text-muted) !important;
+  --text-muted: var(--cl-text-muted) !important;
+  --text-subtle: var(--cl-text-muted) !important;
+  --channels-default: var(--cl-text-muted) !important;
+  --interactive-normal: var(--cl-text-muted) !important;
+  --interactive-hover: var(--cl-text) !important;
+  --interactive-active: var(--cl-text-strong) !important;
+  --interactive-muted: var(--cl-text-faint) !important;
+  --text-link: var(--cl-accent) !important;
+
+  /* Discord's blurple, everywhere it's used: Root accent / Root buttons instead */
+  --brand-260: var(--cl-accent-hover) !important;
+  --brand-360: var(--cl-accent-hover) !important;
+  --brand-400: var(--cl-accent-hover) !important;
+  --brand-430: var(--cl-accent) !important;
+  --brand-460: var(--cl-accent) !important;
+  --brand-530: var(--cl-accent) !important;
+  --brand-600: var(--cl-accent) !important;
+  --text-brand: var(--cl-accent) !important;
+  --background-brand: var(--cl-accent) !important;
+  --focus-primary: var(--cl-accent) !important;
+  --control-brand-foreground-new: var(--cl-accent) !important;
+  --button-filled-brand-background: var(--cl-text-strong) !important;
+  --button-filled-brand-background-hover: var(--cl-text) !important;
+  --button-filled-brand-background-active: var(--cl-text-muted) !important;
+  --button-filled-brand-text: var(--cl-bg-0) !important;
+  --button-filled-brand-text-hover: var(--cl-bg-0) !important;
+  --button-secondary-background: var(--cl-selected) !important;
+  --button-secondary-background-hover: var(--cl-strong) !important;
+  --button-outline-primary-border: var(--cl-text-faint) !important;
+  --mention-foreground: var(--cl-accent-hover) !important;
+  --mention-background: color-mix(in srgb, var(--cl-accent) 18%, transparent) !important;
+  --redesign-button-primary-background: var(--cl-text-strong) !important;
+  --redesign-button-primary-hover-background: var(--cl-text) !important;
+  --redesign-button-primary-text: var(--cl-bg-0) !important;
+  --redesign-button-secondary-background: var(--cl-selected) !important;
+  --redesign-button-secondary-text: var(--cl-text-strong) !important;
+  --app-frame-background: var(--cl-bg-0) !important;
+
+  /* Accent */
+  --brand-500: var(--cl-accent) !important;
+  --brand-560: var(--cl-accent-hover) !important;
+  --brand-experiment: var(--cl-accent) !important;
+  --brand-experiment-560: var(--cl-accent-hover) !important;
+  --control-brand-foreground: var(--cl-accent) !important;
+
+  /* Scrollbars */
+  --scrollbar-thin-thumb: var(--cl-strong) !important;
+  --scrollbar-thin-track: transparent !important;
+  --scrollbar-auto-thumb: var(--cl-strong) !important;
+  --scrollbar-auto-track: transparent !important;
+  --scrollbar-auto-scrollbar-color-thumb: var(--cl-selected) !important;
+  --scrollbar-auto-scrollbar-color-track: transparent !important;
+
+  /* Shadows off = flatter + cheaper to draw */
+  --elevation-low: none !important;
+  --elevation-medium: 0 0 0 1px var(--cl-border) !important;
+  --elevation-high: 0 0 0 1px var(--cl-border) !important;
+  --elevation-stroke: none !important;
+}
+
+/* ======================================================================
+   LAYOUT: separate rounded panels on the navy backdrop
+   (clip-path rounds each region without changing Discord's layout)
+   ====================================================================== */
+[class*="sidebarList_"],
+[class*="panels_"],
+[class*="chat_"] > [class*="subtitleContainer_"],
+[class*="chatContent_"],
+[class*="membersWrap_"],
+[class*="nowPlayingColumn_"] {
+  clip-path: inset(var(--cl-gap) round var(--cl-radius-lg));
+}
+[class*="sidebarList_"],
+[class*="panels_"],
+[class*="membersWrap_"],
+[class*="membersWrap_"] [class*="members_"],
+[class*="nowPlayingColumn_"] {
+  background: var(--cl-bg-1) !important;
+}
+[class*="chatContent_"],
+[class*="chat_"] > [class*="subtitleContainer_"] {
+  background: var(--cl-bg-2) !important;
+}
+/* Panels carry their own edges now: drop Discord's hairline dividers */
+[class*="sidebarList_"], [class*="panels_"], [class*="membersWrap_"],
+[class*="chat_"] > [class*="subtitleContainer_"], [class*="chatContent_"] {
+  border: none !important;
+  box-shadow: none !important;
+}
+/* Keep text clear of the rounded edges */
+[class*="panels_"] { padding: calc(var(--cl-gap) + 8px) calc(var(--cl-gap) + 8px) !important; }
+[class*="chatContent_"] form { padding-bottom: calc(var(--cl-gap) * 2); }
+
+/* ======================================================================
+   CHANNEL TOOLBAR (Root: channel name, description, action buttons)
+   ====================================================================== */
+[class*="chat_"] > [class*="subtitleContainer_"] h1,
+[class*="chat_"] > [class*="subtitleContainer_"] h2,
+[class*="chat_"] > [class*="subtitleContainer_"] [class*="title_"] {
+  font-weight: 500 !important;
+  color: var(--cl-text-strong) !important;
+}
+[class*="chat_"] > [class*="subtitleContainer_"] [class*="topic_"] {
+  color: var(--cl-text-muted) !important;
+}
+/* Toolbar icons: Root icon buttons (6px rounding, strong highlight on hover) */
+[class*="toolbar_"] > [class*="iconWrapper_"],
+[class*="toolbar_"] > [role="button"],
+#dl-message-log-btn {
+  border-radius: var(--cl-radius-sm) !important;
+  padding: 4px !important;
+  color: var(--cl-text-faint) !important;
+}
+[class*="toolbar_"] > [class*="iconWrapper_"]:hover,
+[class*="toolbar_"] > [role="button"]:hover,
+#dl-message-log-btn:hover {
+  background: var(--cl-strong) !important;
+  color: var(--cl-text-strong) !important;
+}
+
+/* ======================================================================
+   CHANNEL LIST
+   ====================================================================== */
+/* Group headers: Root's small uppercase labels */
+[class*="sidebarList_"] [aria-expanded] h3,
+[class*="sidebarList_"] [class*="mainContent_"] h3 {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+/* Channel rows: 8px rounding, muted until hovered/selected */
+[class*="containerDefault_"] [class*="link_"],
+[class*="containerDefault_"] [class*="wrapper_"] > [class*="link_"] {
+  border-radius: var(--cl-radius-md) !important;
+}
+[class*="containerDefault_"] [class*="name_"] { color: var(--cl-text-muted); }
+[class*="containerDefault_"] [class*="link_"]:hover [class*="name_"] { color: var(--cl-text) !important; }
+[class*="modeSelected_"] [class*="link_"],
+[class*="modeSelected_"] > [class*="link_"] {
+  background: var(--cl-selected) !important;
+}
+[class*="modeSelected_"] [class*="name_"] {
+  color: var(--cl-text-strong) !important;
+  font-weight: 500 !important;
+}
+/* Unread channels: bright name, accent marker */
+[class*="modeUnread_"] [class*="name_"] { color: var(--cl-text-strong) !important; font-weight: 500 !important; }
+/* Only the small unread marker beside a channel name (not the list's
+   invisible "new unreads" strips, which also have "unread" in their name) */
+[class*="containerDefault_"] [class*="unread_"] {
+  background: var(--cl-text-strong) !important;
+}
+/* DM list rows */
+[class*="privateChannels_"] [class*="interactive_"],
+[class*="privateChannels_"] a {
+  border-radius: var(--cl-radius-md) !important;
+}
+/* Server name header at the top of the channel list */
+[class*="sidebarList_"] header,
+[class*="sidebarList_"] [class*="headerContent_"] {
+  font-weight: 500 !important;
+}
+/* Boost progress bar clutter */
+[class*="premiumProgressBar"], [class*="progressBarContainer_"] { display: none !important; }
+
+/* ======================================================================
+   SERVER RAIL: rounded-square community icons
+   ====================================================================== */
+[class*="guilds_"] { background: transparent !important; }
+[class*="guilds_"] foreignObject { mask: none !important; }
+[class*="guilds_"] foreignObject > div,
+[class*="guilds_"] foreignObject img,
+[class*="guilds_"] [class*="childWrapper_"] {
+  border-radius: 14px !important;
+  transition: none !important;
+}
+[class*="guilds_"] [class*="pill_"] span { background: var(--cl-text-strong) !important; }
+
+/* ======================================================================
+   MESSAGES
+   ====================================================================== */
+[class*="messageListItem_"] [class*="message_"]:hover,
+li[class*="messageListItem_"]:hover > div {
+  background: var(--cl-hover) !important;
+}
+[class*="message_"][class*="mentioned_"] {
+  border-radius: var(--cl-radius-md);
+}
+[class*="username_"] { font-weight: 500 !important; }
+[class*="timestamp_"] { color: var(--cl-text-faint) !important; }
+strong { font-weight: 600; }
+/* "New messages" divider in the accent colour */
+[class*="divider_"][class*="isUnread_"] { border-color: var(--cl-accent) !important; }
+[class*="divider_"][class*="isUnread_"] span,
+[class*="unreadPill_"] { background: var(--cl-accent) !important; color: #fff !important; }
+/* Embeds and attachments: Root cards */
+[class*="embedFull_"], [class*="embed_"][class*="markup_"],
+[class*="attachment_"], [class*="wrapper_"][class*="file_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+/* Reactions: small pills */
+[class*="reaction_"] {
+  border-radius: 9999px !important;
+  background: var(--cl-hover) !important;
+  border: 1px solid transparent !important;
+}
+[class*="reaction_"][class*="reactionMe_"] {
+  background: color-mix(in srgb, var(--cl-accent) 16%, transparent) !important;
+  border-color: color-mix(in srgb, var(--cl-accent) 45%, transparent) !important;
+}
+/* Code blocks */
+pre code, code.inline {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-md) !important;
+}
+
+/* ======================================================================
+   MESSAGE BOX: Root input (12px, 1px border, accent on focus)
+   ====================================================================== */
+[class*="channelTextArea_"] [class*="scrollableContainer_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  box-shadow: none !important;
+}
+[class*="channelTextArea_"]:focus-within [class*="scrollableContainer_"] {
+  border-color: var(--cl-accent) !important;
+}
+[class*="channelTextArea_"] [class*="placeholder_"] { color: var(--cl-text-faint) !important; }
+input[class*="input_"], textarea[class*="textArea_"], [class*="searchBar_"],
+[class*="inputWrapper_"] input {
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="searchBar_"] { background: var(--cl-bg-3) !important; border: 1px solid var(--cl-border) !important; }
+[class*="searchBar_"]:focus-within { border-color: var(--cl-accent) !important; }
+
+/* ======================================================================
+   MEMBER LIST: grouped by role with Root's uppercase labels
+   ====================================================================== */
+[class*="membersGroup_"], h3[class*="membersGroup_"] {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+[class*="member_"] [class*="layout_"], [class*="member_"] > div {
+  border-radius: var(--cl-radius-md) !important;
+}
+
+/* ======================================================================
+   USER PANEL (bottom left)
+   ====================================================================== */
+[class*="panels_"] [class*="avatarWrapper_"] { border-radius: var(--cl-radius-md) !important; }
+[class*="panels_"] button, [class*="panels_"] [role="button"] { border-radius: var(--cl-radius-sm) !important; }
+
+/* ======================================================================
+   BUTTONS: Root pills
+   ====================================================================== */
+/* Primary: white pill with dark text (dark mode) / black pill (light mode) */
+button[class*="colorBrand"],
+button[class*="lookFilled"][class*="colorBrand"],
+button[class*="primary_"][class*="lookFilled"] {
+  background: var(--cl-text-strong) !important;
+  color: var(--cl-bg-0) !important;
+  border-radius: 9999px !important;
+  font-weight: 500 !important;
+}
+button[class*="colorBrand"]:hover { opacity: 0.7; }
+button[class*="colorBrand"]:active { opacity: 0.5; transform: scale(0.98); }
+button[class*="lookFilled"], button[class*="lookOutlined"],
+button[class*="colorRed"], button[class*="colorGreen"], button[class*="colorPrimary"] {
+  border-radius: 9999px !important;
+  font-weight: 500 !important;
+}
+/* Outlined = Root's outline button */
+button[class*="lookOutlined"] {
+  background: transparent !important;
+  border: 1px solid var(--cl-text-faint) !important;
+  color: var(--cl-text) !important;
+}
+/* Links-as-buttons stay quiet */
+button[class*="lookLink"] { border-radius: var(--cl-radius-md) !important; }
+
+/* ======================================================================
+   TABS: Root's underlined tabs (Friends page and similar)
+   ====================================================================== */
+[class*="tabBar_"] [role="tab"], [role="tablist"] [role="tab"][class*="item_"] {
+  background: transparent !important;
+  border-radius: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  color: var(--cl-text-muted) !important;
+  font-weight: 500 !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+[class*="tabBar_"] [role="tab"]:hover { color: var(--cl-text) !important; }
+[class*="tabBar_"] [role="tab"][aria-selected="true"],
+[role="tablist"] [role="tab"][class*="item_"][aria-selected="true"] {
+  color: var(--cl-text-strong) !important;
+  border-bottom-color: var(--cl-accent) !important;
+}
+
+/* ======================================================================
+   MENUS, POPOUTS, TOOLTIPS, MODALS
+   ====================================================================== */
+[role="menu"], [class*="menu_"][class*="styleFlexible_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-md) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+  padding: 8px !important;
+}
+[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"] {
+  border-radius: var(--cl-radius-md) !important;
+}
+[role="menuitem"]:hover, [role="menuitem"][class*="focused_"],
+[role="menuitemcheckbox"][class*="focused_"], [role="menuitemradio"][class*="focused_"] {
+  background: var(--cl-selected) !important;
+  color: var(--cl-text-strong) !important;
+}
+[class*="popout_"], [class*="userPopout"], [class*="userProfileOuter"] {
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="tooltip_"][class*="tooltipPrimary_"], [class*="tooltip_"] {
+  background: var(--cl-bg-3) !important;
+  color: var(--cl-text-strong) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-md) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+}
+[class*="tooltipPointer_"] { display: none !important; }
+[role="dialog"][class*="root_"], [class*="modal_"][role="dialog"], [class*="focusLock_"] > [role="dialog"] {
+  background: var(--cl-bg-2) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-md) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+}
+[class*="backdrop_"] { background: rgba(0, 0, 0, 0.5) !important; }
+
+/* ======================================================================
+   SETTINGS PAGES: Root settings sidebar
+   ====================================================================== */
+[class*="sidebarRegion_"], [class*="sidebarRegionScroller_"] { background: var(--cl-bg-1) !important; }
+[class*="contentRegion_"], [class*="contentRegionScroller_"] { background: var(--cl-bg-2) !important; }
+[class*="side_"] [class*="item_"] {
+  border-radius: var(--cl-radius-md) !important;
+  color: var(--cl-text-muted) !important;
+}
+[class*="side_"] [class*="item_"]:hover { background: var(--cl-hover) !important; color: var(--cl-text) !important; }
+[class*="side_"] [class*="item_"][class*="selected_"] {
+  background: var(--cl-selected) !important;
+  color: var(--cl-text-strong) !important;
+  font-weight: 500 !important;
+}
+[class*="side_"] [class*="header_"] {
+  font-size: 12px !important; font-weight: 500 !important;
+  letter-spacing: 0.04em !important; text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+
+/* ======================================================================
+   TYPOGRAPHY: system font, medium (500) headings
+   ====================================================================== */
+:root {
+  --font-primary: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  --font-display: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  --font-headline: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  --font-code: Consolas, Menlo, Monaco, "Courier New", monospace !important;
+}
+h1, h2, h3, [class*="title_"], [class*="heading-"] { font-weight: 500 !important; }
+
+/* ======================================================================
+   SCROLLBARS, SELECTION
+   ====================================================================== */
+::-webkit-scrollbar { width: 6px !important; height: 6px !important; }
+::-webkit-scrollbar-thumb {
+  background: var(--cl-strong) !important;
+  border: none !important;
+  border-radius: 9999px !important;
+}
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent !important; }
+::selection { background: color-mix(in srgb, var(--cl-accent) 35%, transparent); }
+
+/* ======================================================================
+   DECLUTTER (Root doesn't have these)
+   ====================================================================== */
+[aria-label="Send a gift"],
+a[href="/store"], a[href="/shop"], a[href^="/shop"],
+a[href="/quest-home"], a[href^="/quest-home"],
+[class*="nowPlayingColumn_"] [class*="emptyCard_"] {
+  display: none !important;
+}
+
+/* ======================================================================
+   2.1: LESS DISCORD
+   ====================================================================== */
+
+/* "Add a server" / "Discover" buttons: quiet tiles, no green */
+[class*="guilds_"] [class*="circleIconButton_"] {
+  background: var(--cl-bg-3) !important;
+  color: var(--cl-text-muted) !important;
+  border-radius: 14px !important;
+}
+[class*="guilds_"] [class*="circleIconButton_"]:hover {
+  background: var(--cl-strong) !important;
+  color: var(--cl-text-strong) !important;
+}
+[class*="guilds_"] [class*="guildSeparator_"] { background: var(--cl-border) !important; }
+/* Mention badges: same red, but Root-style rounded pills with a navy ring */
+[class*="numberBadge_"] { box-shadow: 0 0 0 3px var(--cl-bg-0) !important; }
+
+/* Top bar (window title + back/forward): blends into the backdrop */
+[class*="appMount_"] > [class*="bar_"]:not([class*="sidebar"]),
+[class*="base_"] > [class*="bar_"]:not([class*="sidebar"]) {
+  background: var(--cl-bg-0) !important;
+  border: none !important;
+}
+[class*="base_"] > [class*="bar_"]:not([class*="sidebar"]) [class*="title_"] { color: var(--cl-text-muted) !important; font-weight: 500 !important; }
+/* Help button in the top bar */
+[class*="trailing_"] > a[href="https://support.discord.com"],
+a[href^="https://support.discord.com"][class*="anchor_"] { display: none !important; }
+
+/* "Find or start a conversation": a Root search box */
+[class*="privateChannels_"] [class*="searchBar_"] button,
+[class*="sidebarList_"] [class*="searchBar_"] button {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  color: var(--cl-text-faint) !important;
+  justify-content: flex-start !important;
+  font-weight: 400 !important;
+  padding: 0 12px !important;
+}
+[class*="privateChannels_"] [class*="searchBar_"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Friends page: Root primary button for "Add Friend", underlined tabs */
+[class*="addFriend_"],
+[role="tablist"] [role="tab"][class*="addFriend_"],
+[class*="tabBar_"] [role="tab"][class*="addFriend_"] {
+  background: var(--cl-text-strong) !important;
+  color: var(--cl-bg-0) !important;
+  border-radius: 9999px !important;
+  border: none !important;
+  padding: 2px 14px !important;
+}
+[role="tablist"] [role="tab"][class*="addFriend_"][aria-selected="true"],
+[class*="addFriend_"][aria-selected="true"] {
+  background: transparent !important;
+  color: var(--cl-accent) !important;
+  border-bottom: 2px solid var(--cl-accent) !important;
+  border-radius: 0 !important;
+}
+[class*="tabBar_"] [role="tab"][class*="item_"]:not([class*="addFriend_"]),
+[class*="tabBody_"] [role="tab"]:not([class*="addFriend_"]) {
+  background: transparent !important;
+}
+/* Friends rows / DM rows: Root list items */
+[class*="peopleListItem_"] { border-radius: var(--cl-radius-md) !important; border-color: transparent !important; }
+[class*="peopleListItem_"]:hover { background: var(--cl-hover) !important; }
+[class*="actionButton_"] {
+  background: var(--cl-hover) !important;
+  color: var(--cl-text-muted) !important;
+  border-radius: var(--cl-radius-sm) !important;
+}
+[class*="actionButton_"]:hover { background: var(--cl-strong) !important; color: var(--cl-text-strong) !important; }
+/* Selected DM / Friends row */
+[class*="privateChannels_"] [class*="selected_"] [class*="interactive_"],
+[class*="privateChannels_"] [class*="interactiveSelected_"] {
+  background: var(--cl-selected) !important;
+  color: var(--cl-text-strong) !important;
+}
+[class*="privateChannelsHeaderContainer_"], [class*="privateChannels_"] h2 {
+  font-size: 12px !important; font-weight: 500 !important;
+  letter-spacing: 0.04em !important; text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+
+/* User panel buttons (mic, headphones, settings): Root icon buttons, not white circles */
+[class*="panels_"] button,
+[class*="panels_"] [role="switch"],
+[class*="panels_"] [class*="actionButtons_"] button,
+[class*="panels_"] [class*="actionButtons_"] [role="button"],
+[class*="panels_"] [class*="actionButtons_"] [role="switch"] {
+  background: transparent !important;
+  color: var(--cl-text-muted) !important;
+  border-radius: var(--cl-radius-sm) !important;
+  box-shadow: none !important;
+}
+[class*="panels_"] button:hover,
+[class*="panels_"] [role="switch"]:hover,
+[class*="panels_"] [class*="actionButtons_"] button:hover,
+[class*="panels_"] [class*="actionButtons_"] [role="button"]:hover,
+[class*="panels_"] [class*="actionButtons_"] [role="switch"]:hover {
+  background: var(--cl-strong) !important;
+  color: var(--cl-text-strong) !important;
+}
+[class*="panels_"] button > div:not([class*="avatar"]):not([class*="status"]),
+[class*="panels_"] [role="switch"] > div {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+[class*="panels_"] [class*="actionButtons_"] [class*="redIcon_"],
+[class*="panels_"] [class*="actionButtons_"] [aria-checked="true"] { color: var(--status-danger, #f23f43) !important; }
+
+/* Quests, Nitro and Shop links in the DM list */
+a[href*="/quest"], a[href*="quests"], [data-list-item-id*="quest"],
+a[href="/store"], a[href^="/store"], [data-list-item-id*="nitro"], [data-list-item-id*="shop"] {
+  display: none !important;
+}
+
+/* ======================================================================
+   2.3: POPOUTS, PICKERS, MENUS AND SETTINGS PAGES
+   ====================================================================== */
+
+/* ---------- Profile cards (click a name or avatar) ---------- */
+[class*="userPopoutOuter_"], [class*="userProfileOuter_"], [class*="biteSize_"],
+[class*="userPopoutInner_"], [class*="userProfileInner_"] {
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="userPopoutOuter_"], [class*="userProfileOuter_"], [class*="biteSize_"] {
+  border: 1px solid var(--cl-border) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden;
+}
+/* Default (non-Nitro) profiles: Root card colours. Custom profile colours are kept. */
+[class*="userPopoutOuter_"]:not([class*="custom"]), [class*="userProfileOuter_"]:not([class*="custom"]),
+[class*="userPopoutInner_"]:not([class*="custom"]) {
+  background: var(--cl-bg-3) !important;
+}
+/* Inner info blocks (About Me, Member Since, roles) */
+[class*="userPopoutOverlayBackground_"],
+[class*="userPopoutOuter_"] [class*="overlayBackground_"],
+[class*="userProfileOuter_"] [class*="overlayBackground_"],
+[class*="biteSize_"] [class*="overlayBackground_"] {
+  background: var(--cl-bg-2) !important;
+  border-radius: var(--cl-radius-md) !important;
+}
+/* Role pills */
+[class*="role_"][class*="roleRemoveButton"], [class*="rolePill_"], [class*="role_"] [class*="roleCircle_"] {
+  border-radius: 9999px !important;
+}
+[class*="rolePill_"], div[class*="role_"][role="listitem"] {
+  background: var(--cl-hover) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: 9999px !important;
+}
+/* "Message @user" box inside the card */
+[class*="userPopoutOuter_"] [class*="channelTextArea_"] [class*="scrollableContainer_"],
+[class*="biteSize_"] [class*="channelTextArea_"] [class*="scrollableContainer_"],
+[class*="userPopoutOuter_"] input, [class*="biteSize_"] input {
+  background: var(--cl-bg-2) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+
+/* ---------- Right-click menus ---------- */
+[role="menu"] [role="separator"], [role="menu"] [class*="separator_"] {
+  background: var(--cl-border) !important;
+  border-color: var(--cl-border) !important;
+  margin: 4px 6px !important;
+}
+[role="menu"] [class*="label_"] { font-weight: 400 !important; }
+[role="menu"] [class*="colorDanger_"]:hover, [role="menu"] [class*="colorDanger_"][class*="focused_"] {
+  background: color-mix(in srgb, var(--status-danger, #f23f43) 14%, transparent) !important;
+  color: var(--status-danger, #f23f43) !important;
+}
+[role="menu"] [role="menuitemcheckbox"] [class*="checkbox_"],
+[role="menu"] [role="menuitemradio"] [class*="radio_"] {
+  border-radius: var(--cl-radius-sm) !important;
+}
+
+/* ---------- Emoji / GIF / sticker picker ---------- */
+[class*="expressionPickerPositionLayer_"] > div,
+[class*="emojiPicker_"], [class*="contentWrapper_"][class*="expression"],
+#emoji-picker-tab-panel, #gif-picker-tab-panel, #sticker-picker-tab-panel {
+  background: var(--cl-bg-3) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="expressionPickerPositionLayer_"] > div {
+  border: 1px solid var(--cl-border) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden;
+}
+/* GIFs / Stickers / Emoji tabs: underlined, not blurple pills */
+[class*="navList_"] [class*="navButton_"], [class*="navItem_"][role="tab"] {
+  background: transparent !important;
+  border-radius: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  color: var(--cl-text-muted) !important;
+  font-weight: 500 !important;
+}
+[class*="navList_"] [class*="navButtonActive_"],
+[class*="navList_"] [class*="navButton_"][aria-selected="true"],
+[class*="navItem_"][role="tab"][aria-selected="true"] {
+  color: var(--cl-text-strong) !important;
+  border-bottom-color: var(--cl-accent) !important;
+}
+/* Category rail on the left of the emoji picker */
+[class*="emojiPicker_"] [class*="categoryList_"], [class*="stickerPicker"] [class*="categoryList_"] {
+  background: var(--cl-bg-1) !important;
+}
+[class*="categoryList_"] [class*="categoryItem_"][class*="selected_"],
+[class*="categoryList_"] [class*="itemSelected_"] {
+  background: var(--cl-selected) !important;
+  border-radius: var(--cl-radius-md) !important;
+}
+/* Hovered / selected emoji and stickers */
+[class*="emojiItem_"], [class*="stickerItem_"] { border-radius: var(--cl-radius-sm) !important; }
+[class*="emojiItem_"][class*="emojiItemSelected_"], [class*="emojiItem_"]:hover,
+[class*="stickerItem_"]:hover {
+  background: var(--cl-selected) !important;
+}
+/* Bottom strip that shows the hovered emoji's name */
+[class*="emojiPicker_"] [class*="inspector_"] {
+  background: var(--cl-bg-1) !important;
+  border-top: 1px solid var(--cl-border) !important;
+}
+/* GIF tiles */
+[class*="gifPicker"] [class*="result_"], [class*="categoryFade_"], [class*="gif_"][class*="categoryText"] {
+  border-radius: var(--cl-radius-md) !important;
+}
+
+/* ---------- @mention / command / emoji autocomplete ---------- */
+[class*="autocomplete_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+}
+[class*="autocomplete_"] [class*="clickable_"], [class*="autocomplete_"] [role="option"] {
+  border-radius: var(--cl-radius-md) !important;
+}
+[class*="autocomplete_"] [class*="selected_"], [class*="autocomplete_"] [aria-selected="true"] {
+  background: var(--cl-selected) !important;
+}
+[class*="autocomplete_"] h3, [class*="autocomplete_"] [class*="title_"] {
+  font-size: 12px !important; font-weight: 500 !important;
+  letter-spacing: 0.04em !important; text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+
+/* ---------- Bar above the message box (replying to / uploading) ---------- */
+[class*="attachedBars_"], [class*="channelTextArea_"] [class*="replyBar_"],
+[class*="channelTextArea_"] [class*="uploadArea_"] {
+  background: var(--cl-bg-3) !important;
+  border-radius: var(--cl-radius-lg) var(--cl-radius-lg) 0 0 !important;
+}
+
+/* ---------- Message hover toolbar (react, reply, more) ---------- */
+[class*="buttonsInner_"], [class*="hoverBarButtons"], [class*="buttons_"] [class*="wrapper_"][class*="hoverBar"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-md) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+}
+[class*="buttonsInner_"] [class*="button_"], [class*="hoverBarButton_"] {
+  border-radius: var(--cl-radius-sm) !important;
+  color: var(--cl-text-muted) !important;
+}
+[class*="buttonsInner_"] [class*="button_"]:hover, [class*="hoverBarButton_"]:hover {
+  background: var(--cl-strong) !important;
+  color: var(--cl-text-strong) !important;
+}
+
+/* ---------- Inbox / pins / search results panels ---------- */
+[class*="recentMentionsPopout_"], [class*="messagesPopoutWrap_"], [class*="messagesPopout_"],
+[class*="searchResultsWrap_"] {
+  background: var(--cl-bg-1) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="messagesPopout_"] [class*="messageGroupWrapper_"],
+[class*="searchResultsWrap_"] [class*="searchResult_"] {
+  background: var(--cl-bg-2) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+
+/* ---------- Discord's own settings pages ---------- */
+[class*="standardSidebarView_"] { background: var(--cl-bg-0) !important; }
+/* Page titles and section labels */
+[class*="contentColumn_"] h2, [class*="sectionTitle_"], [class*="contentColumn_"] h5 {
+  font-weight: 500 !important;
+}
+[class*="contentColumn_"] h5, [class*="sectionTitle_"] {
+  font-size: 12px !important; letter-spacing: 0.04em !important;
+  text-transform: uppercase !important; color: var(--cl-text-muted) !important;
+}
+[class*="contentColumn_"] [class*="divider_"] { border-color: var(--cl-border) !important; }
+/* Text boxes and dropdowns: Root inputs */
+[class*="contentColumn_"] input[type="text"], [class*="contentColumn_"] input[type="email"],
+[class*="contentColumn_"] input[type="password"], [class*="contentColumn_"] textarea,
+[class*="inputDefault_"], [class*="select_"][class*="lookFilled_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="contentColumn_"] input:focus, [class*="inputDefault_"]:focus,
+[class*="select_"][class*="open_"] {
+  border-color: var(--cl-accent) !important;
+}
+/* Account card / connection cards / boxed sections */
+[class*="accountProfileCard_"], [class*="connectionContainer_"], [class*="connection_"][class*="card"],
+[class*="contentColumn_"] [class*="cardPrimary_"], [class*="contentColumn_"] [class*="card_"][class*="outline"] {
+  background: var(--cl-bg-1) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+/* Radio list rows (e.g. message display). Colour swatches are left alone. */
+[class*="radioBar_"] {
+  border-radius: var(--cl-radius-md) !important;
+  background: var(--cl-hover) !important;
+}
+[class*="radioBar_"][aria-checked="true"] {
+  background: var(--cl-selected) !important;
+  box-shadow: inset 0 0 0 1px var(--cl-accent) !important;
+}
+/* Toggle switches: Root (off = highlight, on = accent) */
+[class*="contentColumn_"] [class*="switch_"], [class*="container_"][class*="switch"] {
+  border-radius: 9999px !important;
+}
+/* The settings close (Esc) button */
+[class*="closeButton_"] {
+  border-radius: var(--cl-radius-sm) !important;
+  border-color: var(--cl-border) !important;
+}
+
+/* ---------- Banners along the top ("enable notifications", etc.) ---------- */
+[class*="notice_"][class*="colorDefault_"], [class*="notice_"][class*="colorBrand_"],
+[class*="notice_"][class*="colorInfo_"] {
+  background: var(--cl-bg-3) !important;
+  color: var(--cl-text) !important;
+  border-bottom: 1px solid var(--cl-border) !important;
+}
+[class*="notice_"] button { border-radius: 9999px !important; }
+
+/* ======================================================================
+   2.4: PROFILE CARD + EMOJI PICKER, matched to Discord's real elements
+   (taken from a layout capture, so these hit exactly)
+   ====================================================================== */
+
+/* ---------- Profile card ---------- */
+.user-profile-popout {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden !important;
+}
+.user-profile-popout [class*="inner_"] { background: transparent !important; }
+/* Banner buttons (add friend, more...): hidden until you hover the card */
+.user-profile-popout [class*="bannerButton_"] {
+  opacity: 0;
+  transition: opacity 0.15s !important;
+  border-radius: var(--cl-radius-sm) !important;
+  background: rgba(7, 16, 27, 0.55) !important;
+  color: #fff !important;
+}
+.user-profile-popout:hover [class*="bannerButton_"] { opacity: 1; }
+.user-profile-popout [class*="bannerButton_"]:hover { background: rgba(7, 16, 27, 0.8) !important; }
+/* Name */
+.user-profile-popout [class*="displayName_"] { font-weight: 600 !important; color: var(--cl-text-strong) !important; }
+.user-profile-popout [class*="userTag_"] { color: var(--cl-text-muted) !important; }
+/* Mutual friends / servers: quiet line */
+.user-profile-popout [class*="mutuals_"] { color: var(--cl-text-faint) !important; }
+/* About Me: its own box with a small label */
+.user-profile-popout [class*="body_"] section:has([class*="bio_"]) {
+  background: var(--cl-bg-2) !important;
+  border-radius: var(--cl-radius-md) !important;
+  padding: 10px 12px !important;
+  margin-top: 10px !important;
+}
+.user-profile-popout [class*="body_"] section:has([class*="bio_"])::before {
+  content: "About me";
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--cl-text-muted);
+}
+/* Roles: their own box, label on its own line, small pills */
+.user-profile-popout [class*="roleListContainer_"] {
+  display: block !important;
+  background: var(--cl-bg-2) !important;
+  border-radius: var(--cl-radius-md) !important;
+  padding: 10px 12px !important;
+  margin-top: 8px !important;
+}
+.user-profile-popout [class*="roleListContainer_"]::before {
+  content: "Roles";
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  font-size: 12px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+  line-height: 16px;
+  color: var(--cl-text-muted);
+}
+.user-profile-popout [class*="roleListContainer_"] [role="list"] {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+.user-profile-popout [class*="roleTag_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  margin: 0 !important;
+  padding: 2px 8px !important;
+  min-height: 0 !important;
+  height: auto !important;
+  background: var(--cl-hover) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: 9999px !important;
+}
+.user-profile-popout [class*="roleTag_"] [class*="role_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+.user-profile-popout [class*="roleTag_"] [class*="roleCircle_"] {
+  width: 10px !important;
+  height: 10px !important;
+  min-width: 10px !important;
+  margin: 0 !important;
+}
+.user-profile-popout [class*="roleTag_"] [class*="roleName_"] {
+  font-size: 12px !important;
+  line-height: 16px !important;
+  color: var(--cl-text) !important;
+}
+/* The remove (×) and add (+) buttons only appear while you hover the roles box */
+.user-profile-popout [class*="roleTag_"] svg,
+.user-profile-popout [class*="roleTag_"] [class*="remove"],
+.user-profile-popout [class*="roleListContainer_"] [class*="addButton_"] {
+  opacity: 0;
+  transition: opacity 0.15s !important;
+}
+.user-profile-popout [class*="roleTag_"] svg,
+.user-profile-popout [class*="roleTag_"] [class*="remove"] {
+  width: 0 !important;
+  margin: 0 !important;
+  overflow: hidden;
+}
+.user-profile-popout [class*="roleListContainer_"]:hover [class*="roleTag_"] svg,
+.user-profile-popout [class*="roleListContainer_"]:hover [class*="roleTag_"] [class*="remove"] {
+  opacity: 1;
+  width: 12px !important;
+}
+.user-profile-popout [class*="roleListContainer_"]:hover [class*="addButton_"] { opacity: 1; }
+.user-profile-popout [class*="roleListContainer_"] [class*="addButton_"] {
+  border-radius: 9999px !important;
+  background: var(--cl-hover) !important;
+  width: 22px !important;
+  height: 22px !important;
+}
+/* "Message @user" box: plain until you click into it */
+.user-profile-popout [class*="footer_"] [class*="scrollableContainer_"] {
+  background: var(--cl-bg-2) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  box-shadow: none !important;
+}
+.user-profile-popout [class*="footer_"] [class*="channelTextArea_"]:focus-within [class*="scrollableContainer_"] {
+  border-color: var(--cl-accent) !important;
+}
+
+/* ---------- Emoji / GIF / sticker picker ---------- */
+[class*="expressionPickerPositionLayer_"] [class*="contentWrapper_"] {
+  background: var(--cl-bg-3) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden !important;
+}
+[class*="expressionPickerPositionLayer_"] [class*="emojiPicker_"],
+[class*="expressionPickerPositionLayer_"] [class*="emojiPickerHasTabWrapper_"],
+[class*="expressionPickerPositionLayer_"] [class*="bodyWrapper_"] {
+  background: transparent !important;
+}
+/* Search box: full width, Root input */
+[class*="emojiPicker_"] [class*="header_"] [class*="container_"][class*="md_"] {
+  background: var(--cl-bg-2) !important;
+  border: 1px solid var(--cl-border) !important;
+  border-radius: var(--cl-radius-lg) !important;
+}
+[class*="emojiPicker_"] [class*="header_"] [class*="container_"][class*="md_"]:focus-within {
+  border-color: var(--cl-accent) !important;
+}
+/* "Add Emoji" button: hidden (manage emoji in Server Settings instead) */
+[class*="emojiPicker_"] [class*="header_"] > button { display: none !important; }
+/* Section headings ("Frequently used", server names): Root labels */
+[class*="emojiPickerListWrapper_"] [class*="headerLabel_"] {
+  font-size: 12px !important; font-weight: 500 !important;
+  letter-spacing: 0.04em !important; text-transform: uppercase !important;
+  color: var(--cl-text-muted) !important;
+}
+[class*="emojiPickerListWrapper_"] [class*="header_"][class*="interactive_"] {
+  background: var(--cl-bg-3) !important;
+}
+/* Emoji: soft rounded highlight */
+[class*="emojiPickerListWrapper_"] [class*="emojiItem_"] { border-radius: var(--cl-radius-sm) !important; }
+[class*="emojiPickerListWrapper_"] [class*="emojiItemSelected_"],
+[class*="emojiPickerListWrapper_"] [class*="emojiItem_"]:hover {
+  background: var(--cl-selected) !important;
+}
+/* Category column on the left */
+[class*="emojiPickerHasTabWrapper_"] [class*="categoryList_"] {
+  background: var(--cl-bg-1) !important;
+  border-right: 1px solid var(--cl-border) !important;
+}
+[class*="categoryList_"] [class*="categoryItem_"] { border-radius: var(--cl-radius-md) !important; }
+[class*="categoryList_"] [class*="categoryItem_"] svg[class*="mask_"],
+[class*="categoryList_"] [class*="categoryItem_"] img { border-radius: var(--cl-radius-md) !important; }
+[class*="categoryList_"] [class*="categoryItemDefaultCategorySelected_"],
+[class*="categoryList_"] [class*="categoryItem_"][class*="Selected_"] {
+  background: var(--cl-selected) !important;
+}
+[class*="categoryList_"] [class*="categoryPill_"] { display: none !important; }
+[class*="categoryList_"] [class*="categoryIcon_"] { color: var(--cl-text-muted) !important; }
+/* Bottom strip showing the hovered emoji */
+[class*="emojiPicker_"] [class*="inspector_"] {
+  background: var(--cl-bg-1) !important;
+  border-top: 1px solid var(--cl-border) !important;
+}
+[class*="emojiPicker_"] [class*="inspector_"] [class*="titlePrimary_"] {
+  font-size: 13px !important; font-weight: 500 !important;
+}

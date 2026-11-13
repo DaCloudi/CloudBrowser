@@ -1,0 +1,98 @@
+/*
+  Phoenix Fire: Root Style's layout in ember and gold.
+  Loaded on top of Root Style (pick "Phoenix fire" in Settings > Appearance > Theme).
+  Follows Discord's own Dark / Light setting.
+*/
+
+/* ========== Palette: dark (ember on charcoal) ========== */
+.theme-dark, .theme-darker, .theme-midnight {
+  --cl-accent: #ff7a2f;
+  --cl-accent-hover: #ffa14d;
+  --cl-gold: #ffc24a;
+  --cl-fire: linear-gradient(135deg, #ff4f1f 0%, #ff8a2a 55%, #ffc24a 100%);
+
+  --cl-bg-0: #120b09;   /* backdrop: smouldering charcoal */
+  --cl-bg-1: #1a110e;   /* side panels */
+  --cl-bg-2: #1f1411;   /* chat */
+  --cl-bg-3: #2a1a15;   /* inputs, cards, menus */
+  --cl-hover: rgba(255, 150, 90, 0.06);
+  --cl-selected: rgba(255, 140, 70, 0.12);
+  --cl-strong: rgba(255, 140, 70, 0.18);
+  --cl-border: rgba(255, 150, 100, 0.10);
+
+  --cl-text: #f3e8e2;
+  --cl-text-strong: #fff7f1;
+  --cl-text-muted: #b99e92;
+  --cl-text-faint: #7f665c;
+}
+
+/* ========== Palette: light (warm cream) ========== */
+.theme-light {
+  --cl-accent: #e0561a;
+  --cl-accent-hover: #c74510;
+  --cl-gold: #c98a00;
+  --cl-fire: linear-gradient(135deg, #e0401a 0%, #f07a1f 55%, #e8a400 100%);
+
+  --cl-bg-0: #efe0d4;
+  --cl-bg-1: #f8eee6;
+  --cl-bg-2: #fffaf6;
+  --cl-bg-3: #f5e9df;
+  --cl-hover: rgba(160, 60, 10, 0.05);
+  --cl-selected: rgba(200, 80, 20, 0.10);
+  --cl-strong: rgba(200, 80, 20, 0.15);
+  --cl-border: rgba(140, 60, 20, 0.12);
+
+  --cl-text: #2b1a13;
+  --cl-text-strong: #160b06;
+  --cl-text-muted: #7a5a4b;
+  --cl-text-faint: #a88a7c;
+}
+
+/* ========== Fire touches ========== */
+
+/* Main buttons: a fiery pill instead of a white one */
+button[class*="colorBrand"],
+button[class*="lookFilled"][class*="colorBrand"],
+button[class*="primary_"][class*="lookFilled"],
+[class*="addFriend_"],
+[role="tablist"] [role="tab"][class*="addFriend_"],
+[class*="tabBar_"] [role="tab"][class*="addFriend_"] {
+  background: var(--cl-fire) !important;
+  color: #1a0c06 !important;
+  font-weight: 600 !important;
+}
+.theme-dark, .theme-darker, .theme-midnight, .theme-light {
+  --button-filled-brand-background: #ff7a2f !important;
+  --button-filled-brand-background-hover: #ff8f45 !important;
+  --button-filled-brand-text: #1a0c06 !important;
+  --redesign-button-primary-background: #ff7a2f !important;
+  --redesign-button-primary-text: #1a0c06 !important;
+}
+
+/* Gold for "this one": selected tab underline, unread markers, active category */
+[class*="tabBar_"] [role="tab"][aria-selected="true"],
+[role="tablist"] [role="tab"][class*="item_"][aria-selected="true"],
+[class*="navList_"] [class*="navButtonActive_"],
+[class*="navList_"] [class*="navButton_"][aria-selected="true"] {
+  border-bottom-color: var(--cl-gold) !important;
+}
+[class*="containerDefault_"] [class*="unread_"] { background: var(--cl-gold) !important; }
+[class*="guilds_"] [class*="pill_"] span { background: var(--cl-gold) !important; }
+
+/* A faint ember glow along the top of the chat panel */
+[class*="chatContent_"] { box-shadow: inset 0 1px 0 rgba(255, 140, 60, 0.22) !important; }
+
+/* Mentions: warm highlight with an orange edge */
+[class*="message_"][class*="mentioned_"] {
+  background: color-mix(in srgb, var(--cl-accent) 12%, transparent) !important;
+  box-shadow: inset 2px 0 0 var(--cl-accent) !important;
+}
+
+/* Message box lights up orange when you type */
+[class*="channelTextArea_"]:focus-within [class*="scrollableContainer_"] {
+  border-color: var(--cl-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cl-accent) 18%, transparent) !important;
+}
+
+/* Text selection */
+::selection { background: color-mix(in srgb, var(--cl-accent) 38%, transparent); }

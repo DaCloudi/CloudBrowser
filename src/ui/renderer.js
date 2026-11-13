@@ -436,8 +436,9 @@ function siteKind(url) {
 const tabEls = new Map(); // id -> { el, key }
 let tabsLayoutKey = '';
 
+function splitSide(id) { const sp = state.split; return sp ? (sp.a === id ? 'L' : sp.b === id ? 'R' : '') : ''; }
 function tabKey(t, vertical, narrow) {
-  return [t.title, t.favicon, t.loading, t.private, t.audible, t.muted, t.pinned, t.sleeping, t.id === state.activeId, vertical, narrow].join('|');
+  return [t.title, t.favicon, t.loading, t.private, t.audible, t.muted, t.pinned, t.sleeping, t.id === state.activeId, splitSide(t.id), vertical, narrow].join('|');
 }
 
 function buildTab(t, vertical, narrow) {
@@ -478,7 +479,8 @@ function buildTab(t, vertical, narrow) {
 
 function fillTab(el, t, vertical, narrow) {
   el.className = 'tab' + (t.id === state.activeId ? ' active' : '') + (narrow && !t.pinned ? ' narrow' : '')
-    + (t.pinned ? ' pinned' : '') + (t.sleeping ? ' sleeping' : '');
+    + (t.pinned ? ' pinned' : '') + (t.sleeping ? ' sleeping' : '')
+    + (splitSide(t.id) ? ' in-split split-' + splitSide(t.id) + (state.split.showing ? ' split-shown' : '') : '');
   el.title = t.title + (t.pinned ? ' (pinned)' : '') + (t.sleeping ? ' (sleeping: click to wake)' : '');
 
   let icon;
@@ -604,6 +606,7 @@ function render() {
   renderRail();
   renderMedia();
   $('vr-badge').classList.toggle('show', !!state.vrActive);
+  renderSplit();
   reportPageRect();
 
   $('back').disabled = !(tab && tab.canGoBack);
@@ -710,6 +713,52 @@ function renderRail() {
   }));
 }
 $('rail-add').onclick = () => cloud.sidebarAddMenu();
+
+// ---------- split view ----------
+
+function renderSplit() {
+  const sp = state.split;
+  const on = !!(sp && sp.showing);
+  $('split-btn').classList.toggle('on', on);
+  $('split-btn').title = on ? 'Close split view (Ctrl+Shift+E) · right-click for more' : 'Split view: two tabs side by side (Ctrl+Shift+E)';
+  const div = $('split-divider'), act = $('split-active');
+  div.hidden = act.hidden = !on;
+  if (!on) return;
+  div.style.left = sp.divX + 'px'; div.style.top = sp.y + 'px'; div.style.width = sp.gap + 'px'; div.style.height = sp.h + 'px';
+  const leftActive = sp.active === 'a';
+  act.style.top = (sp.y - 2) + 'px';
+  act.style.left = (leftActive ? sp.x0 : sp.divX + sp.gap) + 'px';
+  act.style.width = (leftActive ? sp.leftW : sp.w - sp.leftW - sp.gap) + 'px';
+}
+$('split-btn').onclick = () => cloud.splitToggle();
+$('split-btn').oncontextmenu = e => { e.preventDefault(); cloud.splitMenu(); };
+(() => {
+  const div = $('split-divider');
+  let dragging = false, raf = 0, lastX = 0;
+  div.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !state.split) return;
+    dragging = true; lastX = e.clientX;
+    div.setPointerCapture(e.pointerId);
+    div.classList.add('dragging');
+    cloud.setOverlay(true); // lift the toolbar layer above the pages so the drag isn't lost
+  });
+  div.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    lastX = e.clientX;
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const sp = state.split;
+      if (!sp || !sp.showing) return;
+      const r = Math.min(0.85, Math.max(0.15, (lastX - sp.x0 - sp.gap / 2) / (sp.w - sp.gap)));
+      cloud.splitRatio(r);
+    });
+  });
+  const stop = () => { if (!dragging) return; dragging = false; div.classList.remove('dragging'); cloud.setOverlay(false); };
+  div.addEventListener('pointerup', stop);
+  div.addEventListener('pointercancel', stop);
+  div.addEventListener('dblclick', () => cloud.splitRatio(0.5));
+})();
 
 // ---------- now playing ----------
 

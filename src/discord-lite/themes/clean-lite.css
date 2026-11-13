@@ -1,0 +1,159 @@
+/*
+  Clean Lite: a flat, minimal theme for Discord Lite
+  ---------------------------------------------------
+  - Follows Discord's own Appearance setting: pick Dark or Light in
+    User Settings > Appearance and the matching palette below is used.
+  - Flat surfaces, soft contrast, one calm accent colour, thin scrollbars,
+    Windows' own font, and a few cluttery buttons hidden.
+
+  Built into Discord Lite: pick it in Settings > Appearance > Theme.
+  To customise it, copy this file into theme.css and pick "Custom (theme.css)".
+
+  Tweak: change --cl-accent below to any colour you like.
+*/
+
+/* ========== Palette: dark ========== */
+.theme-dark, .theme-darker, .theme-midnight {
+  --cl-accent: #8b93ff;
+  --cl-accent-hover: #a3a9ff;
+
+  --cl-bg-0: #111214;   /* server list, deepest */
+  --cl-bg-1: #16171a;   /* channel list, member list */
+  --cl-bg-2: #1b1c20;   /* chat */
+  --cl-bg-3: #222328;   /* inputs, cards, popouts */
+  --cl-hover: rgba(255, 255, 255, 0.04);
+  --cl-selected: rgba(255, 255, 255, 0.07);
+  --cl-border: rgba(255, 255, 255, 0.06);
+
+  --cl-text: #dcdde1;
+  --cl-text-strong: #f2f3f5;
+  --cl-text-muted: #8d9098;
+  --cl-text-faint: #5e6168;
+}
+
+/* ========== Palette: light ========== */
+.theme-light {
+  --cl-accent: #5560e6;
+  --cl-accent-hover: #434ed4;
+
+  --cl-bg-0: #eceef1;
+  --cl-bg-1: #f4f5f7;
+  --cl-bg-2: #ffffff;
+  --cl-bg-3: #f1f2f4;
+  --cl-hover: rgba(0, 0, 0, 0.035);
+  --cl-selected: rgba(0, 0, 0, 0.06);
+  --cl-border: rgba(0, 0, 0, 0.07);
+
+  --cl-text: #2b2d33;
+  --cl-text-strong: #111216;
+  --cl-text-muted: #6b6f78;
+  --cl-text-faint: #9a9da4;
+}
+
+/* ========== Map the palette onto Discord's variables ========== */
+/* Both the current (refreshed) names and the older names are set,
+   so it keeps working as Discord renames things. */
+.theme-dark, .theme-darker, .theme-midnight, .theme-light {
+  /* Surfaces: current names */
+  --background-base-lowest: var(--cl-bg-0) !important;
+  --background-base-lower: var(--cl-bg-1) !important;
+  --background-base-low: var(--cl-bg-1) !important;
+  --background-surface-high: var(--cl-bg-3) !important;
+  --background-surface-higher: var(--cl-bg-3) !important;
+  --background-surface-highest: var(--cl-bg-3) !important;
+  --chat-background-default: var(--cl-bg-2) !important;
+  --background-mod-subtle: var(--cl-hover) !important;
+  --background-mod-normal: var(--cl-selected) !important;
+  --background-mod-strong: var(--cl-selected) !important;
+  --border-subtle: var(--cl-border) !important;
+  --border-normal: var(--cl-border) !important;
+  --border-faint: var(--cl-border) !important;
+
+  /* Surfaces: older names */
+  --background-primary: var(--cl-bg-2) !important;
+  --background-secondary: var(--cl-bg-1) !important;
+  --background-secondary-alt: var(--cl-bg-1) !important;
+  --background-tertiary: var(--cl-bg-0) !important;
+  --background-floating: var(--cl-bg-3) !important;
+  --background-nested-floating: var(--cl-bg-3) !important;
+  --modal-background: var(--cl-bg-2) !important;
+  --modal-footer-background: var(--cl-bg-1) !important;
+  --channeltextarea-background: var(--cl-bg-3) !important;
+  --background-message-hover: var(--cl-hover) !important;
+  --background-modifier-hover: var(--cl-hover) !important;
+  --background-modifier-selected: var(--cl-selected) !important;
+  --background-modifier-active: var(--cl-selected) !important;
+  --background-modifier-accent: var(--cl-border) !important;
+  --bg-base-primary: var(--cl-bg-2) !important;
+  --bg-base-secondary: var(--cl-bg-1) !important;
+  --bg-base-tertiary: var(--cl-bg-0) !important;
+
+  /* Text */
+  --text-default: var(--cl-text) !important;
+  --text-normal: var(--cl-text) !important;
+  --text-strong: var(--cl-text-strong) !important;
+  --header-primary: var(--cl-text-strong) !important;
+  --header-secondary: var(--cl-text-muted) !important;
+  --text-muted: var(--cl-text-muted) !important;
+  --text-subtle: var(--cl-text-muted) !important;
+  --channels-default: var(--cl-text-muted) !important;
+  --interactive-normal: var(--cl-text-muted) !important;
+  --interactive-hover: var(--cl-text) !important;
+  --interactive-active: var(--cl-text-strong) !important;
+  --interactive-muted: var(--cl-text-faint) !important;
+  --text-link: var(--cl-accent) !important;
+
+  /* Accent */
+  --brand-500: var(--cl-accent) !important;
+  --brand-560: var(--cl-accent-hover) !important;
+  --brand-experiment: var(--cl-accent) !important;
+  --brand-experiment-560: var(--cl-accent-hover) !important;
+  --control-brand-foreground: var(--cl-accent) !important;
+
+  /* Scrollbars */
+  --scrollbar-thin-thumb: var(--cl-selected) !important;
+  --scrollbar-thin-track: transparent !important;
+  --scrollbar-auto-thumb: var(--cl-selected) !important;
+  --scrollbar-auto-track: transparent !important;
+  --scrollbar-auto-scrollbar-color-thumb: var(--cl-selected) !important;
+  --scrollbar-auto-scrollbar-color-track: transparent !important;
+
+  /* Shadows off = flatter + cheaper to draw */
+  --elevation-low: none !important;
+  --elevation-medium: 0 0 0 1px var(--cl-border) !important;
+  --elevation-high: 0 0 0 1px var(--cl-border) !important;
+  --elevation-stroke: none !important;
+}
+
+/* ========== Typography: Windows' own font, a touch roomier ========== */
+:root {
+  --font-primary: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif !important;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif !important;
+}
+
+/* ========== Thin, quiet scrollbars ========== */
+::-webkit-scrollbar { width: 6px !important; height: 6px !important; }
+::-webkit-scrollbar-thumb {
+  background: var(--cl-selected) !important;
+  border: none !important;
+  border-radius: 6px !important;
+}
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent !important; }
+
+/* ========== Selection colour ========== */
+::selection { background: color-mix(in srgb, var(--cl-accent) 35%, transparent); }
+
+/* ========== Declutter ========== */
+/* Nitro gift button in the message box */
+[aria-label="Send a gift"],
+/* Nitro / Shop entries at the top of the DM list */
+a[href="/store"], a[href="/shop"], a[href^="/shop"],
+/* "Active Now" column on the Friends page */
+[class*="nowPlayingColumn"] {
+  display: none !important;
+}
+
+/* Softer, consistent rounding on popouts and menus */
+[role="menu"], [role="dialog"] > div, [class*="popout"] {
+  border-radius: 10px !important;
+}
