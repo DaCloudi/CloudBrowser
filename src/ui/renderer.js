@@ -61,8 +61,12 @@ function reportPageRect() {
   const railEl = $('apprail');
   railEl.style.top = top + 'px';
   const rail = document.body.classList.contains('has-rail') ? Math.round(railEl.getBoundingClientRect().width) : 0;
+  const key = `${x},${top},${rail}`;
+  if (key === lastPageRect) return; // nothing moved: don't bother the main process
+  lastPageRect = key;
   cloud.setPageRect({ x, y: top, rail });
 }
+let lastPageRect = '';
 new ResizeObserver(reportPageRect).observe($('chrome'));
 new ResizeObserver(reportPageRect).observe($('sidebar'));
 
@@ -427,7 +431,15 @@ cloud.onDownloadDone(() => {
 
 // ---------- rendering ----------
 
-cloud.onState(s => { state = s; render(); });
+cloud.onState(s => {
+  if (!s.bookmarks && state) s.bookmarks = state.bookmarks; // sent only when they change
+  state = s;
+  if (renderQueued) return;
+  // Draw at most once per frame, however many updates arrive.
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+});
+let renderQueued = false;
 
 function activeTab() { return state && state.tabs.find(t => t.id === state.activeId); }
 
@@ -557,10 +569,15 @@ function renderTabs() {
   if (vertical) { const a = strip.querySelector('.tab.active'); if (a) a.scrollIntoView({ block: 'nearest' }); }
 }
 
+let bookmarksKey = null;
 function renderBookmarksBar() {
   const bar = $('bookmarksbar');
   bar.classList.toggle('show', !!state.showBookmarksBar);
-  if (!state.showBookmarksBar) return;
+  if (!state.showBookmarksBar) { bookmarksKey = null; return; }
+  // Only rebuild when the bookmarks actually change (state updates come many times a second while pages load).
+  const key = JSON.stringify(state.bookmarks);
+  if (key === bookmarksKey) return;
+  bookmarksKey = key;
   if (!state.bookmarks.length) {
     const hint = document.createElement('span');
     hint.className = 'bm-hint';
@@ -845,7 +862,8 @@ function renderMedia() {
     if (art.dataset.src !== m.artwork) { art.dataset.src = m.artwork; art.style.backgroundImage = `url("${m.artwork.replace(/["\\]/g, '')}")`; }
   } else { art.dataset.src = ''; art.style.backgroundImage = ''; }
   art.classList.toggle('empty', !art.dataset.src);
-  $('mp-play').innerHTML = m.playing ? PAUSE_ICON : PLAY_ICON;
+  const playIcon = m.playing ? PAUSE_ICON : PLAY_ICON;
+  if ($('mp-play').dataset.icon !== String(m.playing)) { $('mp-play').innerHTML = playIcon; $('mp-play').dataset.icon = String(m.playing); }
   $('mp-prev').disabled = !m.canPrev;
   $('mp-next').disabled = !m.canNext;
 }

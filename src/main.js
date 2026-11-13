@@ -303,6 +303,7 @@ function pagesSend(channel, data) {
 // ---------- state to the UI ----------
 
 let statePushes = 0;
+let bookmarksRev = 1;
 function sendState(w) {
   if (!w || w.stateQueued) return;
   w.stateQueued = true;
@@ -357,7 +358,8 @@ function pushState(w) {
     incognito: w.incognito,
     update: updateState,
     version: app.getVersion(),
-    bookmarks: bookmarks.data.items.map(b => ({ id: b.id, url: b.url, title: b.title, favicon: b.favicon })),
+    // Bookmarks only when they've changed since this toolbar last got them.
+    bookmarks: w.bookmarksRev === bookmarksRev ? undefined : (w.bookmarksRev = bookmarksRev, bookmarks.data.items.map(b => ({ id: b.id, url: b.url, title: b.title, favicon: b.favicon }))),
     showBookmarksBar: settings.data.showBookmarksBar && !w.incognito,
     adblock: settings.data.adblock && !!blocker,
     downloads: downloadSummary(),
@@ -485,7 +487,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     w.ui.webContents.on('console-message', (ev) => log('[ui console]', ev.message));
     w.ui.webContents.on('preload-error', (_e, p, err) => log('[ui preload-error]', p, String(err)));
   }
-  w.ui.webContents.on('did-finish-load', () => { applyUiScale(w); mark('toolbar shown'); });
+  w.ui.webContents.on('did-finish-load', () => { w.bookmarksRev = 0; applyUiScale(w); mark('toolbar shown'); });
   w.ui.webContents.once('did-finish-load', async () => {
     // Incognito through the VPN: set up the kill switch before the first page loads.
     if (incognito && vpn) await vpn.setIncognitoOpen(true);
@@ -3320,6 +3322,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
 
     settings = new Store('settings', DEFAULT_SETTINGS);
     bookmarks = new Store('bookmarks', { items: [] });
+    { const save = bookmarks.save.bind(bookmarks); bookmarks.save = (...a) => { bookmarksRev++; return save(...a); }; }
     history = new Store('history', { items: [] });
     permissions = new Store('permissions', { sites: {} });
     downloadStore = new Store('downloads', { items: [] });
@@ -3498,9 +3501,41 @@ async function smokeTest() {
     log(`[PERF] ${label}: ${metrics.length} processes, ${Math.round(mem)} MB, ${cpu.toFixed(1)}% CPU | ${parts.join(' | ')}`);
   };
 
+  // JavaScript CPU profile of the main process: which functions take the time.
+  const profileMain = async (label, fn) => {
+    const inspector = require('inspector');
+    const ses = new inspector.Session();
+    ses.connect();
+    const post = (m, p) => new Promise((res, rej) => ses.post(m, p || {}, (e, r) => (e ? rej(e) : res(r))));
+    await post('Profiler.enable');
+    await post('Profiler.setSamplingInterval', { interval: 500 });
+    await post('Profiler.start');
+    await fn();
+    const { profile } = await post('Profiler.stop');
+    ses.disconnect();
+    const dt = (profile.endTime - profile.startTime) / 1000;
+    const byId = new Map(profile.nodes.map(n => [n.id, n]));
+    const self = new Map();
+    const counts = new Map();
+    for (const id of profile.samples) counts.set(id, (counts.get(id) || 0) + 1);
+    const per = profile.timeDeltas.reduce((a, b) => a + b, 0) / Math.max(1, profile.samples.length) / 1000;
+    let busy = 0;
+    for (const [id, c] of counts) {
+      const n = byId.get(id);
+      const f = n.callFrame;
+      if (['(idle)', '(program)', '(garbage collector)'].includes(f.functionName) && f.functionName === '(idle)') continue;
+      const key = `${f.functionName || '(anon)'} ${(f.url || '').split(/[\\/]/).slice(-2).join('/')}:${f.lineNumber + 1}`;
+      self.set(key, (self.get(key) || 0) + c * per);
+      busy += c * per;
+    }
+    const top = [...self].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, ms]) => `${ms.toFixed(0)}ms ${k}`);
+    log(`[PERF] profile ${label}: main-process JS busy ${busy.toFixed(0)} ms of ${dt.toFixed(0)} ms (${(busy / dt * 100).toFixed(1)}%) | ${top.join(' | ')}`);
+  };
+
   await step('performance', async () => {
     log('[PERF] start-up (ms since launch): ' + Object.entries(perfMarks).map(([k, v]) => `${k} ${v}`).join(', '));
     await perfSnapshot('idle, 1 tab');
+    await profileMain('idle 10 s', () => wait(10000));
     const sites = ['https://en.wikipedia.org/wiki/Cloud', 'https://www.youtube.com/', 'https://www.theverge.com/', 'https://github.com/', 'https://www.bbc.co.uk/news'];
     const opened = [];
     const t0 = Date.now();
@@ -3508,8 +3543,10 @@ async function smokeTest() {
     const lag = monitorEventLoopDelay({ resolution: 10 });
     lag.enable();
     const pushes0 = statePushes;
-    for (const u of sites) opened.push(createTab(w, u));
-    await waitFor(() => opened.every(x => !x.view.webContents.isLoading()), 40000);
+    await profileMain('loading 5 sites', async () => {
+      for (const u of sites) opened.push(createTab(w, u));
+      await waitFor(() => opened.every(x => !x.view.webContents.isLoading()), 40000);
+    });
     lag.disable();
     log(`[PERF] 5 sites loaded side by side in ${Date.now() - t0} ms | main process blocked: worst ${(lag.max / 1e6).toFixed(0)} ms, 99th pct ${(lag.percentile(99) / 1e6).toFixed(0)} ms, mean ${(lag.mean / 1e6).toFixed(1)} ms | toolbar updates ${statePushes - pushes0}`);
     await wait(4000);
