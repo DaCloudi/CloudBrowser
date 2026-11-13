@@ -3118,8 +3118,10 @@ ipcMain.on('dl-bundle', (e) => {
   try { e.returnValue = discordLite && settings.data.discordLite && discordLite.isView(e.sender) ? discordLite.bundle() : null; }
   catch (err) { log('discord-lite bundle failed', err.message); e.returnValue = null; }
 });
+const dlCalls = {};
 ipcMain.handle('dl-invoke', (e, cmd, args) => {
   if (!discordLite || !discordLite.isView(e.sender)) throw new Error('Not allowed');
+  if (SMOKE) dlCalls[cmd] = (dlCalls[cmd] || 0) + 1;
   return discordLite.invoke(cmd, args);
 });
 // SponsorBlock: ask with a 4-character hash prefix so the server can't tell which video it is.
@@ -3595,6 +3597,8 @@ async function smokeTest() {
     opened.forEach(x => closeTab(x.id));
     await wait(3000);
     await perfSnapshot('back to 1 tab (Discord still running)');
+    await profileMain('idle with Discord running', () => wait(10000));
+    log('[PERF] Discord Lite calls so far: ' + JSON.stringify(dlCalls));
   });
 
   await step('google sign-in', async () => {
