@@ -114,6 +114,10 @@ compat("alvr/filesystem/src/lib.rs",
 
 # Use the licence tool newer ALVR uses (the old one doesn't know the Ubuntu font licence).
 compat("alvr/xtask/src/packaging.rs", '"cargo install cargo-about --version 0.6.4"', '"cargo install cargo-about --version 0.8.4 --locked"')
+compat("alvr/xtask/src/packaging.rs",
+       r'let licenses_content = cmd!\(sh, "cargo about generate \{licenses_template\}"\)\s*\.read\(\)\s*\.unwrap\(\);\s*sh\.write_file\(licenses_dir\.join\("dependencies\.html"\), licenses_content\)\s*\.unwrap\(\);',
+       'let licenses_output = licenses_dir.join("dependencies.html");\n'
+       '    cmd!(sh, "cargo about generate {licenses_template} -o {licenses_output}").run().unwrap();', regex=True)
 compat("about.toml", '    "BSD-3-Clause",\n', '    "BSD-3-Clause",\n    "bzip2-1.0.6",\n    "CDLA-Permissive-2.0",\n')
 
 # ---- Our own signing key, so updates install over the top ----

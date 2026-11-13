@@ -28,6 +28,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: alvr
+          key: quest
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -74,6 +78,10 @@ jobs:
         shell: bash
         run: python cloud-desktop/brand.py alvr cloud-desktop/cloud-desktop.keystore
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: alvr
+          key: pc
       - uses: crazy-max/ghaction-chocolatey@v3
         with:
           args: install zip unzip pkgconfiglite
