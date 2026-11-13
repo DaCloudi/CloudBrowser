@@ -3693,9 +3693,10 @@ async function smokeTest() {
     uiSend(w, 'palette-open');
     await wait(800);
     await type('example.org');
+    S('palette: rows for example.org', await ui(w, `[...document.querySelectorAll('.pl-row')].slice(0, 4).map(r => r.innerText.replace(/\\n/g, ' / ')).join(' || ')`), '| tabs', JSON.stringify(w.tabs.map(x => tabUrl(x))));
     await ui(w, `document.getElementById('pl-q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
     await wait(800);
-    S('palette: Enter switched to the tab', tabUrl(activeTab(w)).includes('example.org'), '| closed', await ui(w, `document.getElementById('palette').hidden`));
+    S('palette: Enter switched to the tab', tabUrl(activeTab(w)).includes('example.org'), '| now on', tabUrl(activeTab(w)), '| closed', await ui(w, `document.getElementById('palette').hidden`));
     // Run an action from it.
     uiSend(w, 'palette-open');
     await wait(800);
