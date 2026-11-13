@@ -10,7 +10,7 @@
 
 const {
   app, BaseWindow, WebContentsView, ipcMain, Menu, shell, dialog, session,
-  protocol, nativeTheme, clipboard, nativeImage, Notification, desktopCapturer,
+  protocol, nativeTheme, clipboard, nativeImage, Notification, desktopCapturer, webContents,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -182,6 +182,11 @@ try {
 } catch (e) { console.error('Reader mode unavailable:', e.message); }
 
 // ---------- small helpers ----------
+
+// Start-up timing (milliseconds since the process started), for the performance check.
+const PERF_T0 = Date.now() - Math.round(process.uptime() * 1000);
+const perfMarks = {};
+function mark(name) { if (!(name in perfMarks)) perfMarks[name] = Date.now() - PERF_T0; }
 
 const log = (...a) => {
   const line = a.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
@@ -479,7 +484,7 @@ function createWindow({ incognito = false, urls, active = 0 } = {}) {
     w.ui.webContents.on('console-message', (ev) => log('[ui console]', ev.message));
     w.ui.webContents.on('preload-error', (_e, p, err) => log('[ui preload-error]', p, String(err)));
   }
-  w.ui.webContents.on('did-finish-load', () => applyUiScale(w));
+  w.ui.webContents.on('did-finish-load', () => { applyUiScale(w); mark('toolbar shown'); });
   w.ui.webContents.once('did-finish-load', async () => {
     // Incognito through the VPN: set up the kill switch before the first page loads.
     if (incognito && vpn) await vpn.setIncognitoOpen(true);
@@ -616,6 +621,7 @@ function wireTab(tab) {
     if (tab.histEntry && tab.histEntry.url === wc.getURL()) { tab.histEntry.title = title; history.save(); }
     update();
   });
+  wc.once('did-finish-load', () => mark('first page loaded'));
   wc.on('did-navigate', (_e, url) => {
     applySiteZoom(wc, url);
     tab.readerable = false;
@@ -3306,6 +3312,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    mark('app ready');
     startWidevine();
     app.setAppUserModelId('com.cloudbrowser.app');
     Menu.setApplicationMenu(null);
@@ -3355,6 +3362,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
 
     vpn = new Vpn({ settings, normalPartition: NORMAL_PARTITION, privatePartition: PRIVATE_PARTITION, log, onChange: vpnChanged });
     await vpn.applyKillSwitch(); // nothing loads outside the VPN if it's switched on
+    mark('vpn kill switch set');
     if (settings.data.vpnEnabled) vpn.ensure();
     setupPrivacyHeaders();
     for (const p of [NORMAL_PARTITION, PRIVATE_PARTITION]) setupScreenShare(session.fromPartition(p));
@@ -3379,7 +3387,9 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     setTimeout(checkVr, 4000);
 
     await setupExtensions();
+    mark('extensions loaded');
     startWindows(argUrl(process.argv));
+    mark('windows created');
     setTimeout(() => ensureBitwarden().catch(e => log('Bitwarden setup error', e.message)), 3000);
     setupUpdater();
     setupAdblock();
@@ -3456,6 +3466,69 @@ async function smokeTest() {
   S('version', app.getVersion());
 
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await wait(1000); } return false; };
+
+  // Memory and CPU, by what each process is.
+  const perfSnapshot = async (label, seconds = 8) => {
+    app.getAppMetrics(); // starts the CPU measuring window
+    await wait(seconds * 1000);
+    const metrics = app.getAppMetrics();
+    const byPid = new Map();
+    for (const wc of webContents.getAllWebContents()) {
+      let kind = 'other';
+      const u = wc.getURL();
+      if ([...windows].some(o => o.ui.webContents === wc)) kind = 'toolbar';
+      else if ([...windows].some(o => o.hud && o.hud.webContents === wc)) kind = 'link-preview';
+      else if ([...windows].some(o => [...o.panelViews.values()].some(v => v.webContents === wc)) || (discordPop && discordPop.view.webContents === wc)) kind = 'sidebar app';
+      else if (allTabs().some(x => x.view.webContents === wc)) kind = 'tab';
+      else if (u.startsWith('chrome-extension:')) kind = 'extension';
+      try { byPid.set(wc.getOSProcessId(), kind); } catch {}
+    }
+    const groups = {};
+    let cpu = 0, mem = 0;
+    for (const m of metrics) {
+      const kind = m.type === 'Tab' ? (byPid.get(m.pid) || 'tab (other)') : m.type;
+      const g = groups[kind] || (groups[kind] = { n: 0, mb: 0, cpu: 0 });
+      g.n++; g.mb += m.memory.workingSetSize / 1024; g.cpu += m.cpu.percentUsage;
+      cpu += m.cpu.percentUsage; mem += m.memory.workingSetSize / 1024;
+    }
+    const parts = Object.entries(groups).sort((a, b) => b[1].mb - a[1].mb).map(([k, g]) => `${k} ×${g.n}: ${Math.round(g.mb)} MB, ${g.cpu.toFixed(1)}% CPU`);
+    log(`[PERF] ${label}: ${metrics.length} processes, ${Math.round(mem)} MB, ${cpu.toFixed(1)}% CPU | ${parts.join(' | ')}`);
+  };
+
+  await step('performance', async () => {
+    log('[PERF] start-up (ms since launch): ' + Object.entries(perfMarks).map(([k, v]) => `${k} ${v}`).join(', '));
+    await perfSnapshot('idle, 1 tab');
+    const sites = ['https://en.wikipedia.org/wiki/Cloud', 'https://www.youtube.com/', 'https://www.theverge.com/', 'https://github.com/', 'https://www.bbc.co.uk/news'];
+    const opened = [];
+    const t0 = Date.now();
+    for (const u of sites) opened.push(createTab(w, u));
+    await waitFor(() => opened.every(x => !x.view.webContents.isLoading()), 40000);
+    log(`[PERF] 5 sites loaded side by side in ${Date.now() - t0} ms`);
+    await wait(4000);
+    await perfSnapshot('5 sites open (idle)');
+    // Tab switching: time until the page is on screen and the toolbar has updated.
+    const times = [];
+    for (let i = 0; i < 10; i++) {
+      const x = opened[i % opened.length];
+      const s0 = performance.now();
+      switchTab(w, x.id);
+      await ui(w, `new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`);
+      times.push(performance.now() - s0);
+    }
+    log(`[PERF] tab switch: median ${times.sort((a, b) => a - b)[5].toFixed(1)} ms, worst ${times[9].toFixed(1)} ms`);
+    // Typing in the address bar (suggestions).
+    const k0 = performance.now();
+    await ui(w, `(() => { const a = document.getElementById('address'); a.focus(); for (const ch of 'wikipedia clouds') { a.value += ch; a.dispatchEvent(new Event('input')); } })()`);
+    await ui(w, `new Promise(r => setTimeout(r, 400))`);
+    log(`[PERF] typing 16 letters into the address bar: ${(performance.now() - k0 - 400).toFixed(1)} ms`);
+    await ui(w, `(() => { const a = document.getElementById('address'); a.value = ''; a.blur(); })()`);
+    startDiscordInBackground();
+    await wait(25000);
+    await perfSnapshot('5 sites + Discord in the background');
+    opened.forEach(x => closeTab(x.id));
+    await wait(3000);
+    await perfSnapshot('back to 1 tab (Discord still running)');
+  });
 
   await step('google sign-in', async () => {
     S('user agent', session.fromPartition(NORMAL_PARTITION).getUserAgent());
