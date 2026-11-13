@@ -31,7 +31,7 @@ function render() {
   let [title, hint] = STATE_TEXT[live.state] || STATE_TEXT.off;
   if (live.state === 'streaming' || live.state === 'connected') title += live.via === 'cable' ? ' over USB cable' : ' over Wi-Fi';
   if (live.state === 'streaming') hint = live.via === 'cable' ? 'Your PC is on your Quest through the cable. Have fun!' : 'Your PC is on your Quest over Wi-Fi. A USB cable can be smoother.';
-  if (!live.installed) { title = 'Not installed yet'; hint = 'Install Cloud Desktop on this PC and your Quest below, then come back here and click Connect.'; }
+  if (!live.installed && live.state === 'off') { title = 'Not installed yet'; hint = 'Install Cloud Desktop on this PC and your Quest below, then come back here and click Connect.'; }
   else if (!live.steamvrInstalled && live.state === 'off') { title = 'SteamVR needed'; hint = 'Install SteamVR from Steam and open it once. Cloud Desktop runs inside it.'; }
   $('stateTitle').textContent = title;
   $('stateHint').textContent = hint;
