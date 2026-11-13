@@ -117,15 +117,29 @@ jobs:
         run: |
           nuget restore src/DesktopPlus.sln
           msbuild /m /p:Configuration=Release /p:DPLUS_SHA='"cloud-desktop"' src/DesktopPlus.sln
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build Cloud Desktop Room (green backdrop for passthrough)
+        shell: cmd
+        run: |
+          git clone --depth 1 --branch v2.5.1 https://github.com/ValveSoftware/openvr openvr-sdk
+          mkdir room-out
+          cl /nologo /O2 /EHsc /DUNICODE /D_UNICODE /Iopenvr-sdk\headers cloud-desktop\room\room.cpp /Fe:room-out\CloudDesktopRoom.exe /link /SUBSYSTEM:WINDOWS /LIBPATH:openvr-sdk\lib\win64
+          copy openvr-sdk\bin\win64\openvr_api.dll room-out\
+          dir room-out
       - name: Collect
         shell: bash
         run: |
           mkdir -p desktop-mode
           cp -r dplus/src/x64/Release/. desktop-mode/
+          mkdir -p desktop-mode/room
+          cp room-out/CloudDesktopRoom.exe room-out/openvr_api.dll desktop-mode/room/
           rm -f desktop-mode/*.pdb desktop-mode/*.lib desktop-mode/*.exp desktop-mode/*.ipdb desktop-mode/*.iobj
           find desktop-mode -name "*.h" -delete
           ls desktop-mode | head -40
           test -f desktop-mode/DesktopPlus.exe
+          test -f desktop-mode/room/CloudDesktopRoom.exe
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-mode

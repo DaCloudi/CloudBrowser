@@ -43,6 +43,7 @@ function render() {
   c.classList.toggle('stop', on);
   if (!busy) c.disabled = !live.installed || (!on && !live.steamvrInstalled) || live.busy;
   if (!busy) $('desktop').disabled = !live.installed || !desktopModeReady || live.busy;
+  $('desktop').textContent = live.desktopMode ? 'Leave desktop mode' : 'Desktop mode';
   $('desktop').title = live.installed && !desktopModeReady ? 'Update Cloud Desktop on this PC to get desktop mode' : 'Your Windows desktop on big screens in VR';
 
   const s = live.stats;
@@ -112,8 +113,9 @@ $('connect').onclick = e => act(e.target, async () => {
   else { await cloud.call('cd-connect'); setTimeout(() => setProgress(''), 6000); }
 });
 $('desktop').onclick = e => act(e.target, async () => {
+  if (live && live.desktopMode) { await cloud.call('cd-set-desktop-mode', false); setProgress(''); return; }
   setProgress('Starting desktop mode… Put your headset on. The first time, Desktop+ shows a quick setup.');
-  await cloud.call('cd-desktop-mode');
+  await cloud.call('cd-set-desktop-mode', true);
 });
 $('installPc').onclick = e => act(e.target, () => cloud.call('cd-install-pc'));
 $('installQuest').onclick = e => act(e.target, () => cloud.call('cd-install-quest'));
@@ -150,6 +152,9 @@ function renderAudio() {
   $('mic').checked = audio.mic;
   $('lowDelay').checked = audio.lowDelay;
   $('autoQuality').checked = audio.autoQuality;
+  $('passthrough').checked = audio.passthrough;
+  $('menuShortcut').checked = audio.menuShortcut;
+  if (!audio.room) $('ptHint').textContent = 'Update Cloud Desktop on this PC to get this. Your real room around your desktop screens (passthrough), like Virtual Desktop.';
   $('vbRow').hidden = !(audio.mic && !audio.vbcable);
   $('micHint').textContent = !audio.mic ? 'Off. Your Quest’s mic won’t reach this PC.'
     : audio.vbcable ? 'On. In Discord or your game, pick “CABLE Output” as the microphone. Changes apply the next time your headset connects.'
@@ -160,6 +165,9 @@ function renderAudio() {
 }
 async function loadAudio() { try { audio = await cloud.call('cd-audio'); renderAudio(); } catch {} }
 $('mic').onchange = async () => { audio = await cloud.call('cd-set-audio', { mic: $('mic').checked }).catch(() => audio); renderAudio(); };
+for (const id of ['passthrough', 'menuShortcut']) {
+  $(id).onchange = async () => { audio = await cloud.call('cd-set-audio', { [id]: $(id).checked }).catch(() => audio); renderAudio(); };
+}
 $('autoQuality').onchange = async () => { audio = await cloud.call('cd-set-audio', { autoQuality: $('autoQuality').checked }).catch(() => audio); renderAudio(); };
 $('lowDelay').onchange = async () => { audio = await cloud.call('cd-set-audio', { lowDelay: $('lowDelay').checked }).catch(() => audio); renderAudio(); };
 $('getVb').onclick = e => act(e.target, async () => {

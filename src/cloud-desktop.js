@@ -199,6 +199,7 @@ class CloudDesktop {
     if (!on) return;
     this.watchdog = setInterval(async () => {
       if (!this.ws && !this.restarting && await this.ping()) this.watch();
+      if (this.roomProc && !this._dmBusy && !(await this.desktopModeActive(true))) this.stopRoom().catch(() => {});
     }, 3000);
     if (this.watchdog.unref) this.watchdog.unref();
   }
@@ -240,6 +241,7 @@ class CloudDesktop {
   }
 
   async disconnect() {
+    await this.setDesktopMode(false).catch(() => {});
     this.keepWatching(false);
     this.stopWatching();
     await this.stopSteamvr();
@@ -304,6 +306,10 @@ class CloudDesktop {
     // Most events are logs and per-frame graph numbers; only parse the two we show.
     const head = text.slice(0, 80);
     if (head.includes('"ServerRequestsSelfRestart"')) { this.restartSteamvr(); return; }
+    if (head.includes('"Buttons"')) {
+      if (text.includes('menu/click')) { try { this.onButtons(JSON.parse(text).event_type.data); } catch {} }
+      return;
+    }
     if (!head.includes('"Session"') && !head.includes('"StatisticsSummary"')) return;
     let e;
     try { e = JSON.parse(text).event_type; } catch { return; }
@@ -339,6 +345,7 @@ class CloudDesktop {
     const st = fresh && active && active.state === 'Streaming' ? live.stats : null;
     return {
       installed: !!this.driverDir(), steamvrInstalled: this.steamvrInstalled(), steamvr, server, busy: this.busy, restarting: !!this.restarting,
+      desktopMode: steamvr ? await this.desktopModeActive() : false, passthrough: !!(this._passthrough && this.roomProc),
       state: this.restarting ? 'starting' : !steamvr ? 'off' : !server ? 'starting' : active ? active.state.toLowerCase() : 'waiting',
       via: active ? (active.wired ? 'cable' : 'wifi') : null,
       headsets,
@@ -464,12 +471,89 @@ class CloudDesktop {
   }
 
   /** Desktop mode: your Windows desktop in VR (Desktop+). It starts SteamVR itself if needed. */
-  async desktopMode() {
-    const exe = this.desktopModePath();
-    if (!exe) throw new Error('Install (or update) Cloud Desktop on this PC first. Desktop mode came in Cloud Desktop 1.1.');
-    if (!(await this.ping())) await this.connect(); // the streamer, so the headset can connect
-    spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
-    return true;
+  roomPath() {
+    const p = path.join(this.dir, 'pc', 'desktop-mode', 'room', 'CloudDesktopRoom.exe');
+    return fs.existsSync(p) ? p : null;
+  }
+
+  /** Desktop mode: your Windows desktop in VR (Desktop+), with your real room around it (passthrough). */
+  async desktopMode() { return this.setDesktopMode(true); }
+  async toggleDesktopMode() { return this.setDesktopMode(!(await this.desktopModeActive(true))); }
+
+  async desktopModeActive(fresh) {
+    if (!fresh && this._dmAt && Date.now() - this._dmAt < 3000) return this._dm;
+    this._dm = await this.processRunning('DesktopPlus.exe');
+    this._dmAt = Date.now();
+    return this._dm;
+  }
+
+  async setDesktopMode(on) {
+    if (this._dmBusy) return this._dm;
+    this._dmBusy = true;
+    try {
+      if (on) {
+        const exe = this.desktopModePath();
+        if (!exe) throw new Error('Install (or update) Cloud Desktop on this PC first. Desktop mode came in Cloud Desktop 1.1.');
+        if (!(await this.ping())) await this.connect(); // the streamer, so the headset can connect
+        // The green backdrop first (it's the SteamVR "app"), then the desktop screens on top.
+        if (this.prefs().passthrough && this.roomPath() && !this.roomProc) {
+          const room = spawn(this.roomPath(), [], { cwd: path.dirname(this.roomPath()), stdio: 'ignore', windowsHide: true });
+          this.roomProc = room;
+          room.on('exit', () => {
+            if (this.roomProc !== room) return;
+            this.roomProc = null;
+            this.setPassthrough(false).catch(() => {}); // a game took over: no more see-through green
+          });
+          room.on('error', () => { if (this.roomProc === room) this.roomProc = null; });
+          await this.setPassthrough(true).catch(e => this.log && this.log('cloud desktop: passthrough', e.message));
+        }
+        if (!(await this.desktopModeActive(true))) spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
+        this._dm = true; this._dmAt = Date.now();
+      } else {
+        for (const name of ['DesktopPlus.exe', 'DesktopPlusUI.exe']) await run('taskkill.exe', ['/im', name, '/f'], { timeout: 8000 }).catch(() => {});
+        await this.stopRoom();
+        this._dm = false; this._dmAt = Date.now();
+      }
+      return this._dm;
+    } finally { this._dmBusy = false; }
+  }
+
+  async stopRoom() {
+    const room = this.roomProc;
+    this.roomProc = null;
+    if (room) { try { room.kill(); } catch {} }
+    await run('taskkill.exe', ['/im', 'CloudDesktopRoom.exe', '/f'], { timeout: 8000 }).catch(() => {});
+    await this.setPassthrough(false).catch(() => {});
+  }
+
+  /** Turn the headset's green-to-room chroma key on or off (it changes live, no restart). */
+  async setPassthrough(on) {
+    this._passthrough = !!on;
+    if (!(await this.ping())) return;
+    const v = (keys, value) => ({ path: ['session_settings', 'video', 'passthrough', ...keys].map(k => ({ Name: k })), value });
+    await this.request({ SetValues: [
+      v(['content', 'variant'], 'RgbChromaKey'),
+      v(['content', 'RgbChromaKey', 'red'], 0),
+      v(['content', 'RgbChromaKey', 'green'], 255),
+      v(['content', 'RgbChromaKey', 'blue'], 0),
+      v(['content', 'RgbChromaKey', 'distance_threshold'], 85),
+      v(['content', 'RgbChromaKey', 'feathering'], 0.05),
+      v(['enabled'], !!on),
+    ] });
+  }
+
+  /** Double-press ☰ on the left controller: desktop mode on or off. */
+  onButtons(list) {
+    if (!this.prefs().menuShortcut || !Array.isArray(list)) return;
+    for (const b of list) {
+      if (!/left\/input\/menu\/click$/.test(b.path || '') || !(b.value && b.value.Binary === true)) continue;
+      const now = Date.now();
+      if (this._menuAt && now - this._menuAt < 450) {
+        this._menuAt = 0;
+        this.log && this.log('cloud desktop: menu double-press, toggling desktop mode');
+        this.toggleDesktopMode().catch(e => this.log && this.log('cloud desktop: desktop mode', e.message));
+      } else this._menuAt = now;
+    }
   }
 
   async adb(progress) {
@@ -555,7 +639,7 @@ class CloudDesktop {
   prefsFile() { return path.join(this.dir, 'prefs.json'); }
   prefs() {
     if (!this._prefs) { try { this._prefs = JSON.parse(fs.readFileSync(this.prefsFile(), 'utf8')); } catch { this._prefs = {}; } }
-    return { mic: true, lowDelay: true, autoQuality: true, lastCable: null, lastVia: null, ...this._prefs };
+    return { mic: true, lowDelay: true, autoQuality: true, passthrough: true, menuShortcut: true, lastCable: null, lastVia: null, ...this._prefs };
   }
   savePrefs(change) {
     this._prefs = { ...this.prefs(), ...change };
@@ -578,12 +662,12 @@ class CloudDesktop {
 
   async audioStatus() {
     const p = this.prefs();
-    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, autoQuality: p.autoQuality, lastCable: p.lastCable, lastVia: p.lastVia, applied: this._audioApplied || null };
+    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, autoQuality: p.autoQuality, passthrough: p.passthrough, menuShortcut: p.menuShortcut, room: !!this.roomPath(), lastCable: p.lastCable, lastVia: p.lastVia, applied: this._audioApplied || null };
   }
 
   async setAudio(change) {
     const pick = {};
-    for (const k of ['mic', 'lowDelay', 'autoQuality']) if (change[k] !== undefined) pick[k] = !!change[k];
+    for (const k of ['mic', 'lowDelay', 'autoQuality', 'passthrough', 'menuShortcut']) if (change[k] !== undefined) pick[k] = !!change[k];
     this.savePrefs(pick);
     await this.applyAudio().catch(e => this.log && this.log('cloud desktop: settings', e.message));
     return await this.audioStatus();
@@ -607,6 +691,10 @@ class CloudDesktop {
     // Best picture automatically: HEVC (sharper than H.264 at the same speed) and a bitrate that
     // rises as high as the connection allows and backs off when Wi-Fi gets busy, instead of a fixed 30 Mbps.
     const maxMbps = onCable ? 400 : 200;
+    values.push(
+      [['extra', 'logging', 'log_button_presses'], !!p.menuShortcut], // so CloudBrowser sees the ☰ double-press
+      [['video', 'passthrough', 'enabled'], !!(this._passthrough && this.roomProc)],
+    );
     if (p.autoQuality) {
       values.push(
         [['video', 'preferred_codec', 'variant'], 'Hevc'],

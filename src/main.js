@@ -3433,6 +3433,7 @@ pageHandle('cd-set-audio', (_ctx, change) => cd().setAudio(change || {}));
 pageHandle('cd-install-vbcable', (ctx) => cd().installVbCable(cdProgress(ctx)));
 pageHandle('cd-open', (ctx) => { if (ctx.tab) openInternal(ctx.tab.w, 'cloud-desktop'); return true; });
 pageHandle('cd-desktop-mode', () => cd().desktopMode());
+pageHandle('cd-set-desktop-mode', (_ctx, on) => cd().setDesktopMode(!!on));
 pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
 pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });
@@ -4166,6 +4167,27 @@ async function smokeTest() {
       await wait(1500);
       cd().restartSteamvr = realRestart;
       S('cloud desktop: restart request handled', restartAsked);
+
+      // Double-press ☰ on the left controller toggles desktop mode (single presses and other buttons don't).
+      const realToggle = cd().toggleDesktopMode;
+      let toggles = 0;
+      cd().toggleDesktopMode = async () => { toggles++; };
+      const btn = (p, v) => ev('Buttons', [{ path: p, value: { Binary: v } }]);
+      const L = '/user/hand/left/input/menu/click', A = '/user/hand/right/input/a/click';
+      for (const so of sockets) so.write(btn(L, true));
+      await wait(800);
+      for (const so of sockets) { so.write(btn(L, false)); so.write(btn(A, true)); }
+      await wait(800);
+      const singleOnly = toggles;
+      for (const so of sockets) { so.write(btn(L, true)); so.write(btn(L, false)); }
+      await wait(150);
+      for (const so of sockets) so.write(btn(L, true));
+      await wait(800);
+      cd().toggleDesktopMode = realToggle;
+      got.length = 0;
+      await cd().setPassthrough(true);
+      await cd().setPassthrough(false);
+      S('cloud desktop: menu double-press', 'after single presses', singleOnly, '| after double press', toggles, '| passthrough sent', JSON.stringify(got).slice(0, 300));
 
       // Sound: switching the mic and low delay on sends the settings to the streamer.
       got.length = 0;
