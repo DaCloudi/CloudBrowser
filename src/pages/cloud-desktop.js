@@ -21,7 +21,7 @@ async function act(btn, fn) {
   busy = true; btn.disabled = true;
   try { await fn(); } catch (e) { setProgress(clean(e)); }
   busy = false; btn.disabled = false;
-  tick(); refreshStatus();
+  tick(); refreshStatus(); loadAudio();
 }
 
 function render() {
@@ -132,6 +132,74 @@ $('checkCable').onclick = e => act(e.target, async () => {
   } finally { e.target.textContent = 'Check again'; }
 });
 
+// ---------- microphone and sound ----------
+let audio = null;
+function renderAudio() {
+  if (!audio) return;
+  $('mic').checked = audio.mic;
+  $('lowDelay').checked = audio.lowDelay;
+  $('vbRow').hidden = !(audio.mic && !audio.vbcable);
+  $('micHint').textContent = !audio.mic ? 'Off. Your Quest’s mic won’t reach this PC.'
+    : audio.vbcable ? 'On. In Discord or your game, pick “CABLE Output” as the microphone. Changes apply the next time your headset connects.'
+    : 'Needs VB-Cable first (below).';
+  $('delayHint').textContent = audio.lastCable === 'slow'
+    ? 'Your cable checked as too slow, so the safer setting stays on even on the cable.'
+    : 'Halves the sound delay (50 ms to 25 ms) when your Quest is on a good USB cable. Wi-Fi keeps the safer setting so sound doesn’t crackle.';
+}
+async function loadAudio() { try { audio = await cloud.call('cd-audio'); renderAudio(); } catch {} }
+$('mic').onchange = async () => { audio = await cloud.call('cd-set-audio', { mic: $('mic').checked }).catch(() => audio); renderAudio(); };
+$('lowDelay').onchange = async () => { audio = await cloud.call('cd-set-audio', { lowDelay: $('lowDelay').checked }).catch(() => audio); renderAudio(); };
+$('getVb').onclick = e => act(e.target, async () => {
+  await cloud.call('cd-install-vbcable');
+  $('micHint').textContent = 'Finish the VB-Cable installer, then restart your PC. Come back here afterwards.';
+});
+
+let micTest = null;
+async function stopMicTest() {
+  if (!micTest) return;
+  clearTimeout(micTest.timer); cancelAnimationFrame(micTest.raf);
+  micTest.stream.getTracks().forEach(t => t.stop());
+  micTest.ctx.close().catch(() => {});
+  micTest = null;
+  $('testMic').textContent = 'Test';
+  $('level').style.width = '0';
+}
+$('testMic').onclick = async () => {
+  if (micTest) return stopMicTest();
+  try {
+    // Ask once so device names show, then listen to VB-Cable's output (that's where the headset mic arrives).
+    const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+    probe.getTracks().forEach(t => t.stop());
+    const inputs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+    const cable = inputs.find(d => /CABLE Output/i.test(d.label));
+    if (!cable) { $('testHint').textContent = 'VB-Cable’s “CABLE Output” wasn’t found. Install VB-Cable and restart your PC first.'; return; }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: cable.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser(); an.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    let heard = 0;
+    micTest = { stream, ctx, raf: 0, timer: 0 };
+    $('levelWrap').hidden = false;
+    $('testMic').textContent = 'Stop';
+    $('testHint').textContent = live && live.state === 'streaming' ? 'Listening… talk into your headset.' : 'Listening… Connect your headset first, then talk.';
+    const loop = () => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      const level = Math.min(1, Math.sqrt(sum / buf.length) * 6);
+      if (level > 0.08) heard++;
+      $('level').style.width = Math.round(level * 100) + '%';
+      micTest.raf = requestAnimationFrame(loop);
+    };
+    loop();
+    micTest.timer = setTimeout(() => {
+      $('testHint').textContent = heard > 10 ? 'Working: this PC can hear your headset mic.' : 'Didn’t hear anything. Check the headset is connected and the mic switch is on, then reconnect.';
+      stopMicTest();
+    }, 12000);
+  } catch (e) { $('testHint').textContent = 'Couldn’t open the microphone: ' + clean(e); stopMicTest(); }
+};
+
+loadAudio();
 refreshStatus();
 tick();
 setInterval(() => { if (!document.hidden) tick(); }, 1000);

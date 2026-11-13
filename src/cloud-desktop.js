@@ -13,6 +13,12 @@ const PLATFORM_TOOLS = 'https://dl.google.com/android/repository/platform-tools-
 const QUEST_APP_ID = 'com.cloudbrowser.desktop';
 const WIRED = 'client.wired'; // the streamer's name for the headset on the USB cable
 const STEAMVR_URL = 'steam://rungameid/250820';
+const VBCABLE_ZIPS = ['https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip', 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip'];
+const BUFFER_NORMAL = 50, BUFFER_LOW = 25; // ms of sound kept in hand to smooth over hiccups
+
+/** A device on the cable (not Wi-Fi debugging, not a phone emulator like BlueStacks). */
+const isUsbSerial = s => !!s && !s.includes(':') && !/^(emulator-|adb-)/.test(s);
+const isQuestModel = m => /quest|eureka|hollywood|seacliff|panther|monterey/i.test(m || '');
 
 function run(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -138,7 +144,12 @@ class CloudDesktop {
       spawn('cmd.exe', ['/c', 'start', '', STEAMVR_URL], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       for (let i = 0; i < 90; i++) {
         await sleep(1000);
-        if (await this.ping()) { this.watch(); progress('Ready. Put your headset on and open Cloud Desktop.'); return true; }
+        if (await this.ping()) {
+          this.watch();
+          await this.applyAudio().catch(e => this.log && this.log('cloud desktop: audio settings', e.message));
+          progress('Ready. Put your headset on and open Cloud Desktop.');
+          return true;
+        }
         if (i === 30) progress('SteamVR is taking a while… (the first start can take a minute)');
       }
       throw new Error('SteamVR started, but Cloud Desktop didn’t answer. Close SteamVR and click Connect again.');
@@ -263,10 +274,8 @@ class CloudDesktop {
       if (process.platform !== 'win32') throw new Error('Cloud Desktop is for Windows PCs.');
       const adb = this.driverDir() ? await this.shareAdb(progress) : await this.adb(progress);
       progress('Looking for your Quest on the cable…');
-      await run(adb, ['start-server'], { timeout: 20000 }).catch(() => {});
-      const devices = (await run(adb, ['devices', '-l'], { timeout: 10000 })).split(/\r?\n/).slice(1).map(l => l.trim()).filter(Boolean)
-        .map(l => { const [serial, state] = l.split(/\s+/); return { serial, state, usb: !/:\d+$/.test(serial) && !serial.startsWith('adb-'), model: (l.match(/model:(\S+)/) || [])[1] || '' }; })
-        .filter(d => d.usb);
+      const devices = (await this.listDevices(adb)).filter(d => d.usb)
+        .sort((x, y) => (y.state === 'device') - (x.state === 'device') || isQuestModel(y.model) - isQuestModel(x.model));
       if (!devices.length) {
         return { found: false, verdict: 'none', title: 'No headset on the cable',
           tips: ['Plug the cable straight into your PC (not a hub), then put the headset on and look for a USB message.', 'Developer Mode must be on: Meta Horizon app › Devices › Headset settings › Developer Mode.', 'Some cables only charge and can’t carry data. Try the cable that came with your Quest, or a Link cable.'] };
@@ -307,7 +316,8 @@ class CloudDesktop {
       }
       if (!charging) tips.push('Your headset isn’t charging from this port, so the battery will run down while you play. Some USB 3 ports give more power.');
       if (streaming) tips.push('You were streaming during the test, so the speed reads lower than it really is.');
-      return { found: true, model: dev.model.replace(/_/g, ' '), link, linkName, mbps, battery: level, charging, verdict, title, tips };
+      this.savePrefs({ lastCable: verdict });
+      return { found: true, model: dev.model, link, linkName, mbps, battery: level, charging, verdict, title, tips };
     });
   }
 
@@ -420,18 +430,11 @@ class CloudDesktop {
       if (!latest || !latest.questApk) throw new Error('No Cloud Desktop release is out yet.');
       const adb = await this.adb(progress);
       progress('Looking for your Quest…');
-      await run(adb, ['start-server']).catch(() => {});
-      const devices = (await run(adb, ['devices'])).split(/\r?\n/).slice(1).map(l => l.trim().split(/\s+/)).filter(x => x[0]);
-      if (!devices.length) {
-        throw new Error('No Quest found. Plug your Quest into this PC with a USB cable, make sure Developer Mode is on (Meta Horizon app on your phone › Devices › Headset settings › Developer Mode), then try again.');
-      }
-      if (devices.some(d => d[1] === 'unauthorized')) {
-        throw new Error('Put your Quest on and choose “Allow” (tick “Always allow from this computer”) on the USB debugging message, then try again.');
-      }
+      const quest = await this.pickQuest(adb);
       const apk = path.join(this.dir, 'CloudDesktop-Quest.apk');
       await this.download(latest.questApk, apk, progress, 'Downloading the Quest app');
       progress('Installing on your Quest…');
-      const out = await run(adb, ['install', '-r', apk], { timeout: 300000 });
+      const out = await run(adb, ['-s', quest.serial, 'install', '-r', apk], { timeout: 300000 });
       if (!/Success/i.test(out)) throw new Error('The Quest said: ' + out.trim().slice(-300));
       progress(`Installed. On your Quest: App Library › Unknown Sources › Cloud Desktop.`);
       return true;
@@ -441,7 +444,135 @@ class CloudDesktop {
   async questInstalled() {
     const adb = path.join(this.dir, 'platform-tools', 'adb.exe');
     if (!fs.existsSync(adb)) return null;
-    try { return (await run(adb, ['shell', 'pm', 'list', 'packages', QUEST_APP_ID], { timeout: 8000 })).includes(QUEST_APP_ID); } catch { return null; }
+    try {
+      const quest = await this.pickQuest(adb);
+      return (await run(adb, ['-s', quest.serial, 'shell', 'pm', 'list', 'packages', QUEST_APP_ID], { timeout: 8000 })).includes(QUEST_APP_ID);
+    } catch { return null; }
+  }
+
+  /** Every Android device adb can see: { serial, state, model, usb }. */
+  async listDevices(adb) {
+    await run(adb, ['start-server'], { timeout: 20000 }).catch(() => {});
+    return (await run(adb, ['devices', '-l'], { timeout: 10000 })).split(/\r?\n/).slice(1).map(l => l.trim()).filter(Boolean)
+      .map(l => { const [serial, state] = l.split(/\s+/); return { serial, state, usb: isUsbSerial(serial), model: ((l.match(/model:(\S+)/) || [])[1] || '').replace(/_/g, ' '), product: (l.match(/product:(\S+)/) || [])[1] || '' }; });
+  }
+
+  /**
+   * The Quest on the USB cable. Other devices (a phone, BlueStacks, the Quest's own Wi-Fi
+   * debugging) are ignored, so adb never says "more than one device".
+   */
+  async pickQuest(adb) {
+    const all = await this.listDevices(adb);
+    const usb = all.filter(d => d.usb);
+    const score = d => (d.state === 'device' ? 4 : d.state === 'unauthorized' ? 2 : 0) + (isQuestModel(d.model) || isQuestModel(d.product) ? 1 : 0);
+    const best = usb.sort((a, b) => score(b) - score(a))[0];
+    if (!best) {
+      const wifiQuest = all.find(d => !d.usb && d.state === 'device' && (isQuestModel(d.model) || isQuestModel(d.product)));
+      if (wifiQuest) return wifiQuest; // the Quest over Wi-Fi debugging still works for installing
+      throw new Error('No Quest found on the USB cable. Plug your Quest into this PC, make sure Developer Mode is on (Meta Horizon app on your phone › Devices › Headset settings › Developer Mode), then try again.');
+    }
+    if (best.state === 'unauthorized') throw new Error('Put your Quest on and choose “Allow” (tick “Always allow from this computer”) on the USB debugging message, then try again.');
+    if (best.state !== 'device') throw new Error(`Your Quest is ${best.state}. Unplug the cable, plug it back in, and try again.`);
+    return best;
+  }
+
+  // ---------- sound: headset mic (needs VB-Cable on Windows) and audio delay ----------
+
+  prefsFile() { return path.join(this.dir, 'prefs.json'); }
+  prefs() {
+    if (!this._prefs) { try { this._prefs = JSON.parse(fs.readFileSync(this.prefsFile(), 'utf8')); } catch { this._prefs = {}; } }
+    return { mic: true, lowDelay: true, lastCable: null, ...this._prefs };
+  }
+  savePrefs(change) {
+    this._prefs = { ...this.prefs(), ...change };
+    try { fs.mkdirSync(this.dir, { recursive: true }); fs.writeFileSync(this.prefsFile(), JSON.stringify(this._prefs, null, 2)); } catch {}
+    return this._prefs;
+  }
+
+  /** Is VB-Cable (the free virtual microphone) installed? */
+  async vbCableInstalled(fresh) {
+    if (process.platform !== 'win32') return false;
+    if (!fresh && this._vb && Date.now() - this._vb.at < 15000) return this._vb.ok;
+    let ok = false;
+    try {
+      const out = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_SoundDevice | ForEach-Object { $_.Name }'], { timeout: 15000 });
+      ok = /VB-Audio Virtual Cable|CABLE Input/i.test(out);
+    } catch {}
+    this._vb = { ok, at: Date.now() };
+    return ok;
+  }
+
+  async audioStatus() {
+    const p = this.prefs();
+    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, lastCable: p.lastCable, applied: this._audioApplied || null };
+  }
+
+  async setAudio(change) {
+    const p = this.savePrefs({ ...(change.mic !== undefined ? { mic: !!change.mic } : {}), ...(change.lowDelay !== undefined ? { lowDelay: !!change.lowDelay } : {}) });
+    await this.applyAudio().catch(e => this.log && this.log('cloud desktop: audio settings', e.message));
+    return { ...(await this.audioStatus()), mic: p.mic, lowDelay: p.lowDelay };
+  }
+
+  /**
+   * Put the sound settings into the streamer: mic on when wanted and VB-Cable is there, and a
+   * smaller sound buffer (less delay) on a good USB cable. Wi-Fi keeps the safer buffer.
+   */
+  async applyAudio(onCable) {
+    const p = this.prefs();
+    if (onCable === undefined) {
+      try { onCable = (await this.listDevices(await this.adb(() => {}))).some(d => d.usb && d.state === 'device'); } catch { onCable = false; }
+    }
+    const mic = p.mic && await this.vbCableInstalled();
+    const buffer = p.lowDelay && onCable && p.lastCable !== 'slow' ? BUFFER_LOW : BUFFER_NORMAL;
+    const values = [
+      [['audio', 'microphone', 'enabled'], mic],
+      [['audio', 'microphone', 'content', 'buffering', 'average_buffering_ms'], buffer],
+      [['audio', 'game_audio', 'content', 'buffering', 'average_buffering_ms'], buffer],
+    ];
+    this._audioApplied = { mic, buffer, onCable };
+    if (await this.ping()) {
+      await this.request({ SetValues: values.map(([keys, value]) => ({ path: ['session_settings', ...keys].map(k => ({ Name: k })), value })) });
+      return this._audioApplied;
+    }
+    // Not running: change the saved settings file, which the streamer reads when it starts.
+    const file = this.sessionFile();
+    const session = file && this.readSession();
+    if (!session) return this._audioApplied;
+    for (const [keys, value] of values) {
+      let o = session.session_settings;
+      for (const k of keys.slice(0, -1)) { if (!o || typeof o !== 'object') { o = null; break; } o = o[k]; }
+      if (o && typeof o === 'object' && keys[keys.length - 1] in o) o[keys[keys.length - 1]] = value;
+    }
+    fs.writeFileSync(file + '.tmp', JSON.stringify(session, null, 2));
+    fs.renameSync(file + '.tmp', file);
+    return this._audioApplied;
+  }
+
+  /** Download VB-Cable from its maker and open its installer (it asks for admin, then a restart). */
+  installVbCable(progress = () => {}) {
+    return this.guard(async () => {
+      if (process.platform !== 'win32') throw new Error('VB-Cable is for Windows.');
+      fs.mkdirSync(this.dir, { recursive: true });
+      const zip = path.join(this.dir, 'vbcable.zip');
+      let lastErr = null;
+      for (const url of VBCABLE_ZIPS) {
+        try { await this.download(url, zip, progress, 'Downloading VB-Cable'); lastErr = null; break; } catch (e) { lastErr = e; }
+      }
+      if (lastErr) throw new Error('Couldn’t download VB-Cable. Get it from vb-audio.com/Cable instead.');
+      const dir = path.join(this.dir, 'vbcable');
+      await this.unzip(zip, dir);
+      fs.rmSync(zip, { force: true });
+      const want = process.arch === 'arm64' ? /^VBCABLE_Setup_(arm64|ARM64)\.exe$/ : /^VBCABLE_Setup_x64\.exe$/i;
+      const files = fs.readdirSync(dir, { recursive: true }).map(String);
+      const setup = files.find(f => want.test(path.basename(f))) || files.find(f => /setup.*\.exe$/i.test(f));
+      if (!setup) throw new Error('VB-Cable’s installer wasn’t in the download. Get it from vb-audio.com/Cable instead.');
+      progress('Opening the VB-Cable installer… Click Yes, then “Install Driver”, then restart your PC.');
+      const exe = path.join(dir, setup).replace(/'/g, "''");
+      await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${exe}' -WorkingDirectory '${path.dirname(exe)}' -Verb RunAs`], { timeout: 60000 })
+        .catch(() => { throw new Error('The VB-Cable installer needs admin permission. Try again and click Yes.'); });
+      this._vb = null;
+      return true;
+    });
   }
 }
 

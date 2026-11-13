@@ -65,3 +65,9 @@
 .tips { margin: 0; padding-left: 18px; color: var(--muted); }
 .tips li { margin: 4px 0; }
 .facts.hide, .meter.hide { display: none; }
+
+/* ---------- sound ---------- */
+.sound .row { padding: 12px 0; }
+.sound .grow { flex: 1; }
+.level { height: 8px; border-radius: 4px; background: var(--field); margin-top: 10px; overflow: hidden; max-width: 420px; }
+.level i { display: block; height: 100%; width: 0; background: #3ba55d; border-radius: 4px; transition: width .08s linear; }

@@ -1082,6 +1082,8 @@ function setupPermissions(sess, isPrivate) {
   sess.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     try {
       if (AUTO_ALLOW.has(permission)) return callback(true);
+      // CloudBrowser's own pages (the Cloud Desktop mic test) may listen to the microphone.
+      if (permission === 'media' && String(details.requestingUrl || wc.getURL()).startsWith('cloud://')) return callback(true);
       if (!PROMPT_PERMISSIONS[permission] || SILENT_DENY.has(permission)) { if (SMOKE) log('permission refused:', permission); return callback(false); }
       const origin = originOf(details.requestingUrl || wc.getURL());
       // Like Chrome, don't let ads and other embedded frames from another site ask.
@@ -1129,6 +1131,7 @@ function setupPermissions(sess, isPrivate) {
 
   sess.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
     if (AUTO_ALLOW.has(permission)) return true;
+    if (permission === 'media' && String(requestingOrigin || '').startsWith('cloud://')) return true;
     if (PROMPT_PERMISSIONS[permission]) return saved(originOf(requestingOrigin))[permission] === 'allow';
     return true; // other internal checks keep Electron's default
   });
@@ -3425,6 +3428,9 @@ pageHandle('cd-trust', (_ctx, hostname) => cd().trust(hostname));
 pageHandle('cd-forget', (_ctx, hostname) => cd().forget(hostname));
 pageHandle('cd-advanced', () => cd().advanced());
 pageHandle('cd-check-cable', (ctx) => cd().checkCable(cdProgress(ctx)));
+pageHandle('cd-audio', () => cd().audioStatus());
+pageHandle('cd-set-audio', (_ctx, change) => cd().setAudio(change || {}));
+pageHandle('cd-install-vbcable', (ctx) => cd().installVbCable(cdProgress(ctx)));
 pageHandle('cd-open', (ctx) => { if (ctx.tab) openInternal(ctx.tab.w, 'cloud-desktop'); return true; });
 pageHandle('cd-desktop-mode', () => cd().desktopMode());
 pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
@@ -4147,6 +4153,16 @@ async function smokeTest() {
       const trusted = await pg.view.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('.hs button')].find(x => x.textContent === 'Trust'); if (b) b.click(); return !!b; })()`).catch(e => e.message);
       await wait(2500);
       S('cloud desktop: trust clicked', trusted, '| requests', JSON.stringify(got.filter(x => x !== '"GetSession"')), '| now', JSON.stringify((await cd().liveStatus()).headsets.map(x => [x.name, x.trusted])));
+
+      // Sound: switching the mic and low delay on sends the settings to the streamer.
+      got.length = 0;
+      const aud = await cd().setAudio({ mic: true, lowDelay: true }).catch(e => ({ error: e.message }));
+      S('cloud desktop: audio', JSON.stringify(aud), '| sent', JSON.stringify(got.filter(x => x.includes('SetValues'))).slice(0, 700));
+      await pg.view.webContents.executeJavaScript(`loadAudio(); document.querySelector('.sound').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
+      await wait(1500);
+      const micTest = await pg.view.webContents.executeJavaScript(`(async () => { document.getElementById('testMic').click(); await new Promise(r => setTimeout(r, 2500)); return document.querySelector('.sound').innerText; })()`).catch(e => e.message);
+      S('cloud desktop: sound section', JSON.stringify(String(micTest).slice(0, 900)));
+      await screen('cloud-desktop-sound');
 
       // Cable checker with no headset plugged in (downloads adb the first time).
       const cable = await pg.view.webContents.executeJavaScript(`(async () => { document.getElementById('checkCable').click(); for (let i = 0; i < 240 && document.getElementById('cableResult').hidden; i++) await new Promise(r => setTimeout(r, 500)); return document.getElementById('cable').innerText; })()`).catch(e => e.message);

@@ -150,6 +150,12 @@ edit("alvr/session/src/lib.rs", [
      "            )]),\n"
      "            session_settings: settings::session_settings_default(),"),
 ])
+# With a phone, an emulator (BlueStacks) or the Quest's Wi-Fi debugging also connected, ALVR
+# picked whichever came first. Use the device on the USB cable.
+edit("alvr/adb/src/lib.rs", [
+    ('.find(|s| !s.starts_with("127.0.0.1"))',
+     '.find(|s| !s.contains(\':\') && !s.starts_with("emulator-") && !s.starts_with("adb-"))'),
+])
 edit("alvr/dashboard/src/dashboard/components/devices.rs", [
     ('ui.heading("Wired Connection")', 'ui.heading("USB Cable (Wired)")'),
 ])
