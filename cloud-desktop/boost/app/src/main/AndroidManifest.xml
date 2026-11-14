@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Granted once from the PC (CloudBrowser › Cloud Desktop › Set up Cloud Boost), so Cloud
+         Boost can switch Wireless debugging on by itself after the Quest restarts. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <application
         android:name=".App"

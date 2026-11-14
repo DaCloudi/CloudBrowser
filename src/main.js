@@ -3421,6 +3421,7 @@ pageHandle('cd-status', () => cd().status());
 pageHandle('cd-install-pc', (ctx) => cd().installPc(cdProgress(ctx)));
 pageHandle('cd-install-quest', (ctx) => cd().installQuest(cdProgress(ctx)));
 pageHandle('cd-install-boost', (ctx) => cd().installQuest(cdProgress(ctx), 'boost'));
+pageHandle('cd-setup-boost', (ctx) => cd().setupBoost(cdProgress(ctx)));
 pageHandle('cd-start', () => cd().start());
 pageHandle('cd-connect', (ctx) => cd().connect(cdProgress(ctx)));
 pageHandle('cd-disconnect', () => cd().disconnect());

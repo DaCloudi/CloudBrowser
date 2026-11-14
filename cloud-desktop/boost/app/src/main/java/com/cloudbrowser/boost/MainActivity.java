@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     private AdbMdns pairingFinder;
     private volatile int pairingPort = -1;
     private volatile boolean connected;
+    private volatile boolean settingUp;
     private TextView liveText;
     private Button autoButton;
     private LinearLayout gamesList;
@@ -88,9 +89,23 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        connect(false);
+        if (getIntent() != null && getIntent().getBooleanExtra("setup", false)) {
+            getIntent().removeExtra("setup");
+            settingUp = true;
+            setStatus("Setting up… tick “Always allow” and press Allow when asked", WARN);
+            // CloudBrowser switches the headset to port 5555 right after opening us; give it a moment.
+            ui.postDelayed(() -> connect(false), 4000);
+            ui.postDelayed(() -> connect(false), 12000);
+            ui.postDelayed(() -> connect(false), 25000);
+        } else connect(false);
         refreshGames();
         ui.post(liveTick);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 
     @Override
@@ -114,7 +129,32 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 AbsAdbConnectionManager m = adb();
-                boolean ok = m.isConnected() || m.autoConnect(getApplication(), 6000) || m.isConnected();
+                boolean canSwitch = checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED;
+                if (canSwitch) {
+                    // Set up from the PC: we may switch Wireless debugging on ourselves (Quest turns it off on restart).
+                    try {
+                        if (Settings.Global.getInt(getContentResolver(), "adb_wifi_enabled", 0) != 1) {
+                            Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 1);
+                            Thread.sleep(2500);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                boolean ok = m.isConnected();
+                if (!ok) try { ok = m.autoConnect(getApplication(), 6000) || m.isConnected(); } catch (AdbPairingRequiredException e) { if (!canSwitch) throw e; }
+                if (!ok) {
+                    // During PC setup the headset listens on port 5555; connecting there shows the
+                    // "Allow debugging?" message once, which authorises Cloud Boost for good.
+                    try { ok = m.connect("127.0.0.1", 5555) || m.isConnected(); } catch (Throwable ignored) {}
+                    if (ok && settingUp) {
+                        settingUp = false;
+                        try { m.openStream("usb:"); } catch (Throwable ignored) {} // back to normal so the USB cable works again
+                        Thread.sleep(3000);
+                        try { m.disconnect(); } catch (Throwable ignored) {}
+                        ok = false;
+                        try { ok = m.autoConnect(getApplication(), 8000) || m.isConnected(); } catch (Throwable ignored) {}
+                        if (!ok) { runOnUiThread(() -> { setStatus("Set up done. Reopen Cloud Boost.", GOOD); toast("Cloud Boost is set up. If it doesn’t connect, close and reopen it."); }); return; }
+                    }
+                }
                 if (!ok) throw new java.io.IOException("not found");
                 connected = true;
                 prefs.edit().putBoolean("paired", true).apply();
@@ -241,12 +281,14 @@ public class MainActivity extends Activity {
         // Set up (pairing)
         setupCard = card();
         setupCard.addView(text("Set up", 19, TEXT, true));
-        setupText = text("Cloud Boost changes Quest settings through the headset’s own developer connection. "
-                + "It needs Developer Mode (already on if you use Cloud Desktop) and Wi-Fi.", 14, MUTED, false);
+        setupText = text("Cloud Boost changes Quest settings through the headset’s developer connection. Set it up once from your PC:", 14, MUTED, false);
         setupCard.addView(setupText, margins(0, 4, 0, 12));
-        setupCard.addView(step("1", "Open Wireless debugging and switch it on.",
+        setupCard.addView(step("1", "Plug your Quest into your PC. In CloudBrowser open Cloud Desktop and click “Set up Cloud Boost”.", null));
+        setupCard.addView(step("2", "A message appears in the headset: tick “Always allow” and press Allow. That’s it — after the Quest restarts, Cloud Boost switches Wireless debugging back on by itself.", null));
+        setupCard.addView(text("Older Quest software (before v81) can pair without a PC instead:", 15, TEXT, true), margins(0, 10, 0, 8));
+        setupCard.addView(step("a", "Open Wireless debugging (in the Android settings, not Quest settings) and switch it on.",
                 button("Open Wireless debugging", true, v -> { openWirelessDebugging(); startFindingPairing(); })));
-        setupCard.addView(step("2", "First time only: tap “Pair device with pairing code”. Keep that window open beside this one.", null));
+        setupCard.addView(step("b", "Tap the words “Wireless debugging”, then “Pair device with pairing code”. Keep that window open beside this one.", null));
         pairPortText = text("Waiting for the pairing window…", 13, MUTED, false);
         setupCard.addView(pairPortText, margins(34, 0, 0, 8));
         LinearLayout codeRow = row();
@@ -255,9 +297,9 @@ public class MainActivity extends Activity {
         portField = field("port (optional)", InputType.TYPE_CLASS_NUMBER);
         codeRow.addView(portField, weight(0.6f, 10));
         codeRow.addView(button("Pair", true, v -> pair()), margins(10, 0, 0, 0));
-        setupCard.addView(step("3", "Type the code here and tap Pair.", null));
+        setupCard.addView(step("c", "Type the code here and tap Pair.", null));
         setupCard.addView(codeRow, margins(34, 0, 0, 12));
-        setupCard.addView(step("4", "After the Quest restarts, just switch Wireless debugging on again, then:",
+        setupCard.addView(step("d", "If it can’t connect after a restart:",
                 button("Connect", false, v -> connect(true))));
         root.addView(setupCard, margins(0, 0, 0, 14));
 

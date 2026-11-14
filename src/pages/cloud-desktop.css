@@ -79,3 +79,5 @@
 .hc.bad .dot { background: #f0b232; }
 .hc .txt { flex: 1; }
 .hc .txt small { display: block; color: var(--muted); font-size: 12px; }
+
+.acts { display: flex; gap: 8px; flex: none; }

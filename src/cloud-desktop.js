@@ -746,6 +746,49 @@ class CloudDesktop {
     });
   }
 
+  /**
+   * One-time Cloud Boost setup over the USB cable (Meta hides Wireless debugging's pairing screen
+   * on current Quest software): install it, let it switch Wireless debugging on by itself, and
+   * have the headset ask once to allow it.
+   */
+  setupBoost(progress = () => {}) {
+    const PKG = 'com.cloudbrowser.boost';
+    return this.guard(async () => {
+      const adb = await this.adb(progress);
+      progress('Looking for your Quest on the cable…');
+      const quest = await this.pickQuest(adb);
+      if (!quest.usb) throw new Error('Plug your Quest into this PC with a USB cable for this one-time setup.');
+      const sh = (args, t = 30000) => run(adb, ['-s', quest.serial, ...args], { timeout: t });
+      const installed = (await sh(['shell', 'pm', 'list', 'packages', PKG]).catch(() => '')).includes(PKG);
+      if (!installed) {
+        const latest = await this.latest();
+        if (!latest || !latest.boostApk) throw new Error('Cloud Boost isn’t out yet. Try again in a few minutes.');
+        const apk = path.join(this.dir, 'CloudBoost.apk');
+        await this.download(latest.boostApk, apk, progress, 'Downloading Cloud Boost');
+        progress('Installing Cloud Boost…');
+        const out = await sh(['install', '-r', apk], 300000);
+        if (!/Success/i.test(out)) throw new Error('The Quest said: ' + out.trim().slice(-300));
+      }
+      progress('Giving Cloud Boost permission to switch Wireless debugging on…');
+      await sh(['shell', 'pm', 'grant', PKG, 'android.permission.WRITE_SECURE_SETTINGS']);
+      await sh(['shell', 'settings', 'put', 'global', 'adb_wifi_enabled', '1']).catch(() => {});
+      progress('Opening Cloud Boost in your headset…');
+      await sh(['shell', 'am', 'start', '-n', `${PKG}/.MainActivity`, '--ez', 'setup', 'true']);
+      await sleep(1500);
+      // Port 5555 for a moment, so Cloud Boost can ask the headset for permission.
+      await sh(['tcpip', '5555'], 15000).catch(() => {});
+      progress('Put your headset on: tick “Always allow” and press Allow. Cloud Boost finishes by itself.');
+      // Cloud Boost switches the headset back to normal USB once it's allowed.
+      for (let i = 0; i < 90; i++) {
+        await sleep(2000);
+        const back = (await this.listDevices(adb).catch(() => [])).some(d => d.serial === quest.serial && d.state === 'device');
+        if (back) { progress('Cloud Boost is set up. Open it in your headset any time — no PC needed from now on.'); return true; }
+      }
+      progress('Nearly there. If Cloud Boost says it’s set up, you’re done. If your USB cable stopped working, restart the Quest.');
+      return true;
+    });
+  }
+
   async questInstalled() {
     const adb = path.join(this.dir, 'platform-tools', 'adb.exe');
     if (!fs.existsSync(adb)) return null;

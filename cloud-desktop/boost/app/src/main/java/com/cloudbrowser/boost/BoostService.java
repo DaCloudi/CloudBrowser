@@ -106,6 +106,14 @@ public class BoostService extends Service {
             AdbStream stream = null;
             try {
                 AbsAdbConnectionManager adb = Adb.getInstance(getApplication());
+                if (!adb.isConnected() && checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        if (android.provider.Settings.Global.getInt(getContentResolver(), "adb_wifi_enabled", 0) != 1) {
+                            android.provider.Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 1);
+                            Thread.sleep(2500);
+                        }
+                    } catch (Throwable ignored) {}
+                }
                 if (!adb.isConnected() && !adb.autoConnect(getApplication(), 8000) && !adb.isConnected()) throw new Exception("no connection");
                 watching = true;
                 update(currentGame == null ? "Watching for games" : "Playing " + label(currentGame));
