@@ -199,7 +199,10 @@ class CloudDesktop {
     if (!on) return;
     this.watchdog = setInterval(async () => {
       if (!this.ws && !this.restarting && await this.ping()) this.watch();
-      if (this.roomProc && !this._dmBusy && !(await this.desktopModeActive(true))) this.stopRoom().catch(() => {});
+      if ((this.roomProc || this.menuProc) && !this._dmBusy && !(await this.desktopModeActive(true))) {
+        this.stopMenu(); // Desktop+ was closed: no menu or green room without it
+        this.stopRoom().catch(() => {});
+      }
     }, 3000);
     if (this.watchdog.unref) this.watchdog.unref();
   }
@@ -307,7 +310,7 @@ class CloudDesktop {
     const head = text.slice(0, 80);
     if (head.includes('"ServerRequestsSelfRestart"')) { this.restartSteamvr(); return; }
     if (head.includes('"Buttons"')) {
-      if (text.includes('menu/click')) { try { this.onButtons(JSON.parse(text).event_type.data); } catch {} }
+      if (text.includes('menu/click') || text.includes('thumbstick/click')) { try { this.onButtons(JSON.parse(text).event_type.data); } catch {} }
       return;
     }
     if (!head.includes('"Session"') && !head.includes('"StatisticsSummary"')) return;
@@ -450,12 +453,18 @@ class CloudDesktop {
       await this.download(latest.pcZip, zip, progress, 'Downloading Cloud Desktop for PC');
       progress('Unpacking…');
       if (await this.isRunning()) await run('taskkill.exe', ['/im', 'ALVR Dashboard.exe', '/f']).catch(() => {});
+      this.stopMenu();
+      for (const exe of ['CloudDesktopTool.exe', 'CloudDesktopRoom.exe']) await run('taskkill.exe', ['/im', exe, '/f']).catch(() => {});
       if (await this.ping()) { progress('Closing SteamVR so the update can replace files…'); this.stopWatching(); await this.stopSteamvr(); }
       const keep = this.sessionFile() && fs.existsSync(this.sessionFile()) ? fs.readFileSync(this.sessionFile()) : null; // your headsets and settings
+      const dpConfig = path.join(this.dir, 'pc', 'desktop-mode', 'config.ini');
+      const newer = v => { const [a, b] = String(v || '0').split('.').map(Number); return a > 1 || (a === 1 && b >= 6); };
+      const keepDp = newer(this.installedVersion()) && fs.existsSync(dpConfig) ? fs.readFileSync(dpConfig) : null; // your screen layout
       await run('taskkill.exe', ['/im', 'DesktopPlus.exe', '/f']).catch(() => {});
       await run('taskkill.exe', ['/im', 'DesktopPlusUI.exe', '/f']).catch(() => {});
       await this.unzip(zip, path.join(this.dir, 'pc'));
       if (keep && this.driverDir()) fs.writeFileSync(this.sessionFile(), keep);
+      if (keepDp && fs.existsSync(path.dirname(dpConfig))) fs.writeFileSync(dpConfig, keepDp);
       fs.writeFileSync(path.join(this.dir, 'pc', 'VERSION'), latest.version);
       fs.rmSync(zip, { force: true });
       progress(`Cloud Desktop ${latest.version} is installed on your PC.`);
@@ -474,6 +483,71 @@ class CloudDesktop {
   roomPath() {
     const p = path.join(this.dir, 'pc', 'desktop-mode', 'room', 'CloudDesktopRoom.exe');
     return fs.existsSync(p) ? p : null;
+  }
+  toolPath() {
+    const p = path.join(this.dir, 'pc', 'desktop-mode', 'room', 'CloudDesktopTool.exe');
+    return fs.existsSync(p) ? p : null;
+  }
+
+  // ---------- the in-headset menu (CloudDesktopTool.exe menu) ----------
+
+  startMenu() {
+    if (this.menuProc || !this.toolPath()) return;
+    const dir = path.join(path.dirname(this.toolPath()), 'menu');
+    const proc = spawn(this.toolPath(), ['menu', dir], { cwd: path.dirname(this.toolPath()), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    this.menuProc = proc;
+    let buf = '';
+    proc.stdout.on('data', d => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); this.onMenuLine(line); }
+    });
+    proc.on('exit', () => { if (this.menuProc === proc) this.menuProc = null; });
+    proc.on('error', () => { if (this.menuProc === proc) this.menuProc = null; });
+  }
+  stopMenu() {
+    const proc = this.menuProc;
+    this.menuProc = null;
+    if (proc) { try { proc.stdin.write('quit\n'); } catch {} setTimeout(() => { try { proc.kill(); } catch {} }, 1500); }
+  }
+  menuSend(cmd) {
+    if (!this.menuProc) return false;
+    try { this.menuProc.stdin.write(cmd + '\n'); return true; } catch { return false; }
+  }
+  onMenuLine(line) {
+    if (!line.startsWith('click ')) return;
+    const code = line.slice(6);
+    this.log && this.log('cloud desktop: menu', code);
+    if (code === 'EXIT') this.setDesktopMode(false).catch(() => {});
+    else if (code === 'ROOM') this.toggleRoomView().catch(() => {});
+  }
+
+  /** Room view (passthrough) on or off while in desktop mode, from the menu. */
+  async toggleRoomView() {
+    const on = !this.roomProc;
+    this.savePrefs({ passthrough: on });
+    if (on) await this.startRoom(); else await this.stopRoom();
+  }
+
+  async startRoom() {
+    if (!this.roomPath() || this.roomProc) return;
+    const room = spawn(this.roomPath(), [], { cwd: path.dirname(this.roomPath()), stdio: 'ignore', windowsHide: true });
+    this.roomProc = room;
+    room.on('exit', () => {
+      if (this.roomProc !== room) return;
+      this.roomProc = null;
+      this.setPassthrough(false).catch(() => {}); // a game took over: no more see-through green
+    });
+    room.on('error', () => { if (this.roomProc === room) this.roomProc = null; });
+    await this.setPassthrough(true).catch(e => this.log && this.log('cloud desktop: passthrough', e.message));
+  }
+
+  /** Put the desktop screens back in front of you. */
+  recenter() {
+    if (this.menuSend('recenter')) return true;
+    if (!this.toolPath()) return false;
+    spawn(this.toolPath(), ['recenter'], { cwd: path.dirname(this.toolPath()), stdio: 'ignore', windowsHide: true }).on('error', () => {});
+    return true;
   }
 
   /** Desktop mode: your Windows desktop in VR (Desktop+), with your real room around it (passthrough). */
@@ -496,20 +570,14 @@ class CloudDesktop {
         if (!exe) throw new Error('Install (or update) Cloud Desktop on this PC first. Desktop mode came in Cloud Desktop 1.1.');
         if (!(await this.ping())) await this.connect(); // the streamer, so the headset can connect
         // The green backdrop first (it's the SteamVR "app"), then the desktop screens on top.
-        if (this.prefs().passthrough && this.roomPath() && !this.roomProc) {
-          const room = spawn(this.roomPath(), [], { cwd: path.dirname(this.roomPath()), stdio: 'ignore', windowsHide: true });
-          this.roomProc = room;
-          room.on('exit', () => {
-            if (this.roomProc !== room) return;
-            this.roomProc = null;
-            this.setPassthrough(false).catch(() => {}); // a game took over: no more see-through green
-          });
-          room.on('error', () => { if (this.roomProc === room) this.roomProc = null; });
-          await this.setPassthrough(true).catch(e => this.log && this.log('cloud desktop: passthrough', e.message));
-        }
-        if (!(await this.desktopModeActive(true))) spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
+        if (this.prefs().passthrough) await this.startRoom();
+        const wasRunning = await this.desktopModeActive(true);
+        if (!wasRunning) spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
+        this.startMenu();
+        if (!wasRunning) setTimeout(() => this.recenter(), 4000); // screens in front of wherever you're facing
         this._dm = true; this._dmAt = Date.now();
       } else {
+        this.stopMenu();
         for (const name of ['DesktopPlus.exe', 'DesktopPlusUI.exe']) await run('taskkill.exe', ['/im', name, '/f'], { timeout: 8000 }).catch(() => {});
         await this.stopRoom();
         this._dm = false; this._dmAt = Date.now();
@@ -542,19 +610,36 @@ class CloudDesktop {
     ] });
   }
 
-  /** Double-press ☰ on the left controller: desktop mode on or off. */
+  /**
+   * Left ☰: one press opens the Cloud Desktop menu (in desktop mode), two quick presses switch
+   * desktop mode on or off. Clicking the right thumbstick recenters the screens.
+   */
   onButtons(list) {
-    if (!this.prefs().menuShortcut || !Array.isArray(list)) return;
+    if (!Array.isArray(list)) return;
     for (const b of list) {
-      if (!/left\/input\/menu\/click$/.test(b.path || '') || !(b.value && b.value.Binary === true)) continue;
+      const down = b.value && b.value.Binary === true;
+      if (!down) continue;
+      if (/right\/input\/thumbstick\/click$/.test(b.path || '')) {
+        if (this._dm) this.recenter();
+        continue;
+      }
+      if (!/left\/input\/menu\/click$/.test(b.path || '')) continue;
       const now = Date.now();
       if (this._menuAt && now - this._menuAt < 450) {
         this._menuAt = 0;
+        clearTimeout(this._menuTimer);
+        if (!this.prefs().menuShortcut) continue;
         this.log && this.log('cloud desktop: menu double-press, toggling desktop mode');
+        this.menuSend('hide');
         this.toggleDesktopMode().catch(e => this.log && this.log('cloud desktop: desktop mode', e.message));
-      } else this._menuAt = now;
+      } else {
+        this._menuAt = now;
+        clearTimeout(this._menuTimer);
+        this._menuTimer = setTimeout(() => { this._menuAt = 0; if (this._dm) this.menuSend('toggle'); }, 460);
+      }
     }
   }
+
 
   async adb(progress) {
     // The streamer uses an adb on PATH first (SideQuest, Android Studio…). Two different adb
@@ -692,7 +777,7 @@ class CloudDesktop {
     // rises as high as the connection allows and backs off when Wi-Fi gets busy, instead of a fixed 30 Mbps.
     const maxMbps = onCable ? 400 : 200;
     values.push(
-      [['extra', 'logging', 'log_button_presses'], !!p.menuShortcut], // so CloudBrowser sees the ☰ double-press
+      [['extra', 'logging', 'log_button_presses'], true], // so CloudBrowser sees ☰ and the thumbstick click
       [['video', 'passthrough', 'enabled'], !!(this._passthrough && this.roomProc)],
     );
     if (p.autoQuality) {

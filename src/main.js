@@ -4184,6 +4184,20 @@ async function smokeTest() {
       for (const so of sockets) so.write(btn(L, true));
       await wait(800);
       cd().toggleDesktopMode = realToggle;
+      // In desktop mode: one ☰ press opens the menu, clicking the right thumbstick recenters.
+      const realSend = cd().menuSend, realRecenter = cd().recenter;
+      const sentToMenu = [];
+      let recentered = 0;
+      cd().menuSend = (c) => { sentToMenu.push(c); return true; };
+      cd().recenter = () => { recentered++; return true; };
+      cd()._dm = true;
+      for (const so of sockets) { so.write(btn(L, true)); so.write(btn(L, false)); }
+      await wait(800);
+      for (const so of sockets) so.write(btn('/user/hand/right/input/thumbstick/click', true));
+      await wait(500);
+      cd()._dm = false;
+      cd().menuSend = realSend; cd().recenter = realRecenter;
+      S('cloud desktop: menu single press', JSON.stringify(sentToMenu), '| recentered', recentered);
       got.length = 0;
       await cd().setPassthrough(true);
       await cd().setPassthrough(false);

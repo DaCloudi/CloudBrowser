@@ -111,6 +111,9 @@ jobs:
       - name: Get Desktop+
         shell: bash
         run: git clone --depth 1 --branch "$(cat cloud-desktop/DESKTOPPLUS_VERSION)" https://github.com/elvissteinjr/DesktopPlus dplus
+      - name: Cloud Desktop's starting setup for Desktop+ (VR screen, grip to grab)
+        shell: bash
+        run: python cloud-desktop/menu/patch_dplus.py dplus
       - uses: microsoft/setup-msbuild@v2
       - name: Build Desktop+
         working-directory: dplus
@@ -120,12 +123,14 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Build Cloud Desktop Room (green backdrop for passthrough)
+      - name: Build Cloud Desktop Room (green backdrop for passthrough) and Tool (menu, recenter)
         shell: cmd
         run: |
           git clone --depth 1 --branch v2.5.1 https://github.com/ValveSoftware/openvr openvr-sdk
           mkdir room-out
           cl /nologo /O2 /EHsc /DUNICODE /D_UNICODE /Iopenvr-sdk\headers cloud-desktop\room\room.cpp /Fe:room-out\CloudDesktopRoom.exe /link /SUBSYSTEM:WINDOWS /LIBPATH:openvr-sdk\lib\win64
+          python cloud-desktop\menu\gen_ids.py dplus\src\Shared room-out\dplus_ids.h
+          cl /nologo /O2 /EHsc /DUNICODE /D_UNICODE /Iopenvr-sdk\headers /Iroom-out /Icloud-desktop\menu cloud-desktop\menu\tool.cpp /Fe:room-out\CloudDesktopTool.exe /link /SUBSYSTEM:CONSOLE /LIBPATH:openvr-sdk\lib\win64
           copy openvr-sdk\bin\win64\openvr_api.dll room-out\
           dir room-out
       - name: Collect
@@ -134,12 +139,16 @@ jobs:
           mkdir -p desktop-mode
           cp -r dplus/src/x64/Release/. desktop-mode/
           mkdir -p desktop-mode/room
-          cp room-out/CloudDesktopRoom.exe room-out/openvr_api.dll desktop-mode/room/
+          cp room-out/CloudDesktopRoom.exe room-out/CloudDesktopTool.exe room-out/openvr_api.dll desktop-mode/room/
+          mkdir -p desktop-mode/room/menu
+          cp cloud-desktop/menu/*.png desktop-mode/room/menu/
           rm -f desktop-mode/*.pdb desktop-mode/*.lib desktop-mode/*.exp desktop-mode/*.ipdb desktop-mode/*.iobj
           find desktop-mode -name "*.h" -delete
           ls desktop-mode | head -40
           test -f desktop-mode/DesktopPlus.exe
           test -f desktop-mode/room/CloudDesktopRoom.exe
+          test -f desktop-mode/room/CloudDesktopTool.exe
+          test -f desktop-mode/room/menu/menu.png
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-mode
