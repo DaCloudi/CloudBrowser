@@ -23,7 +23,15 @@ const isQuestModel = m => /quest|eureka|hollywood|seacliff|panther|monterey/i.te
 function run(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(file, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: opts.timeout || 120000, ...opts }, (err, stdout, stderr) => {
-      if (err) { err.message += (stderr ? `\n${stderr}` : ''); reject(err); } else resolve(String(stdout));
+      if (err) {
+        // Keep the useful line, not a page of Java stack trace.
+        const detail = String(stderr || stdout || '').split(/\r?\n/).map(l => l.trim())
+          .filter(l => l && !/^at |^\tat |^Exception occurred while executing/.test(l))[0];
+        const name = path.basename(String(file));
+        err.message = detail ? `${name}: ${detail.replace(/^java\.lang\.\w+: /, '').slice(0, 300)}` : `${name} failed (${err.code || 'error'})`;
+        err.full = String(stderr || '');
+        reject(err);
+      } else resolve(String(stdout));
     });
   });
 }
@@ -759,18 +767,25 @@ class CloudDesktop {
       const quest = await this.pickQuest(adb);
       if (!quest.usb) throw new Error('Plug your Quest into this PC with a USB cable for this one-time setup.');
       const sh = (args, t = 30000) => run(adb, ['-s', quest.serial, ...args], { timeout: t });
-      const installed = (await sh(['shell', 'pm', 'list', 'packages', PKG]).catch(() => '')).includes(PKG);
-      if (!installed) {
-        const latest = await this.latest();
-        if (!latest || !latest.boostApk) throw new Error('Cloud Boost isn’t out yet. Try again in a few minutes.');
+      // Always the newest Cloud Boost: older ones don't ask for the permission below.
+      const latest = await this.latest();
+      if (!latest || !latest.boostApk) throw new Error('Cloud Boost isn’t out yet. Try again in a few minutes.');
+      const have = ((await sh(['shell', 'dumpsys', 'package', PKG]).catch(() => '')).match(/versionName=(\S+)/) || [])[1];
+      if (have !== latest.version) {
         const apk = path.join(this.dir, 'CloudBoost.apk');
         await this.download(latest.boostApk, apk, progress, 'Downloading Cloud Boost');
-        progress('Installing Cloud Boost…');
+        progress(have ? `Updating Cloud Boost ${have} → ${latest.version}…` : 'Installing Cloud Boost…');
         const out = await sh(['install', '-r', apk], 300000);
         if (!/Success/i.test(out)) throw new Error('The Quest said: ' + out.trim().slice(-300));
       }
       progress('Giving Cloud Boost permission to switch Wireless debugging on…');
-      await sh(['shell', 'pm', 'grant', PKG, 'android.permission.WRITE_SECURE_SETTINGS']);
+      try {
+        await sh(['shell', 'pm', 'grant', PKG, 'android.permission.WRITE_SECURE_SETTINGS']);
+      } catch (e) {
+        throw new Error(/has not requested/.test(e.message + (e.full || ''))
+          ? 'Your Quest still has an old Cloud Boost. Uninstall Cloud Boost in the headset (App Library › Unknown Sources), then click Set up Cloud Boost again.'
+          : 'The Quest wouldn’t give Cloud Boost permission: ' + e.message);
+      }
       await sh(['shell', 'settings', 'put', 'global', 'adb_wifi_enabled', '1']).catch(() => {});
       progress('Opening Cloud Boost in your headset…');
       await sh(['shell', 'am', 'start', '-n', `${PKG}/.MainActivity`, '--ez', 'setup', 'true']);
