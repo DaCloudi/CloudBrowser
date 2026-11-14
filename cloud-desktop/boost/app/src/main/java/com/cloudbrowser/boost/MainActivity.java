@@ -6,7 +6,11 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -23,6 +27,10 @@ import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -57,6 +65,13 @@ public class MainActivity extends Activity {
     private AdbMdns pairingFinder;
     private volatile int pairingPort = -1;
     private volatile boolean connected;
+    private TextView liveText;
+    private Button autoButton;
+    private LinearLayout gamesList;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Runnable liveTick = new Runnable() {
+        public void run() { refreshLive(); ui.postDelayed(this, 1000); }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,13 +89,18 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         connect(false);
+        refreshGames();
+        ui.post(liveTick);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         stopFindingPairing();
+        ui.removeCallbacks(liveTick);
     }
+
+    private boolean autoOn() { return prefs.getBoolean("auto", true); }
 
     // ---------- connecting ----------
 
@@ -98,6 +118,7 @@ public class MainActivity extends Activity {
                 if (!ok) throw new java.io.IOException("not found");
                 connected = true;
                 prefs.edit().putBoolean("paired", true).apply();
+                if (autoOn()) runOnUiThread(() -> BoostService.start(this));
                 String applied = tweaks.isNormal() ? null : shell(tweaks.command());
                 runOnUiThread(() -> {
                     showSetup(false);
@@ -240,8 +261,25 @@ public class MainActivity extends Activity {
                 button("Connect", false, v -> connect(true))));
         root.addView(setupCard, margins(0, 0, 0, 14));
 
-        // Presets
         tuneCard = column();
+
+        // Live: what's playing now and how it's running
+        LinearLayout live = card();
+        LinearLayout liveHead = row();
+        liveHead.addView(text("Now", 19, TEXT, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        autoButton = button("", false, v -> {
+            boolean on = !autoOn();
+            prefs.edit().putBoolean("auto", on).apply();
+            if (on) BoostService.start(this); else BoostService.stop(this);
+            refreshLive();
+        });
+        liveHead.addView(autoButton);
+        live.addView(liveHead, margins(0, 0, 0, 8));
+        liveText = text("", 15, MUTED, false);
+        live.addView(liveText);
+        tuneCard.addView(live, margins(0, 0, 0, 14));
+
+        // Presets
         LinearLayout presets = card();
         presets.addView(text("Quick picks", 19, TEXT, true), margins(0, 0, 0, 10));
         presetButtons = new Button[Tweaks.PRESET_NAMES.length];
@@ -291,12 +329,89 @@ public class MainActivity extends Activity {
         custom.addView(button("Apply", true, v -> apply()));
         applyNote = text("Games pick up changes when they start, so restart the game you’re playing. Quest clears these on restart; Cloud Boost puts them back when it connects.", 13, MUTED, false);
         custom.addView(applyNote, margins(0, 10, 0, 0));
-        tuneCard.addView(custom);
+        tuneCard.addView(custom, margins(0, 0, 0, 14));
+
+        // Per game
+        LinearLayout games = card();
+        games.addView(text("Per game", 19, TEXT, true));
+        games.addView(text("Pick a setting for each game. It goes on the moment the game starts and comes off when you leave. "
+                + "Games you’ve played show how they ran and what Cloud Boost suggests.", 14, MUTED, false), margins(0, 4, 0, 10));
+        gamesList = column();
+        games.addView(gamesList);
+        tuneCard.addView(games);
         root.addView(tuneCard);
 
         root.addView(text("Tip: a game that already runs well won’t get faster by raising CPU/GPU level. "
                 + "Lower resolution or higher foveation helps games that stutter.", 13, MUTED, false), margins(0, 16, 0, 0));
         return scroll;
+    }
+
+    private void refreshLive() {
+        if (liveText == null) return;
+        boolean auto = autoOn();
+        autoButton.setText(auto ? "Per-game: on" : "Per-game: off");
+        style(autoButton, auto);
+        String game = BoostService.currentGame;
+        GameStats.Sample s = BoostService.lastSample;
+        if (!auto) liveText.setText("Per-game switching is off. Your main setting applies to every game.");
+        else if (!BoostService.watching) liveText.setText(connected ? "Starting…" : "Waiting for Wireless debugging.");
+        else if (game == null) liveText.setText("Watching for games. Start one and its setting goes on straight away.");
+        else {
+            String line = "Playing " + BoostService.label(this, game) + " · " + Profiles.nameFor(prefs, game);
+            if (s != null) line += String.format(Locale.US, "\n%d / %d fps%s%s%s", s.fps, s.target,
+                    s.appMs >= 0 ? String.format(Locale.US, " · frame %.1f ms", s.appMs) : "",
+                    s.gpu >= 0 ? String.format(Locale.US, " · CPU %d GPU %d", s.cpu, s.gpu) : "",
+                    s.temp > 0 ? String.format(Locale.US, " · %.0f°C", s.temp) : "");
+            liveText.setText(line);
+        }
+    }
+
+    /** Installed games, the ones with stats first. */
+    private void refreshGames() {
+        if (gamesList == null) return;
+        PackageManager pm = getPackageManager();
+        List<ApplicationInfo> apps = new ArrayList<>();
+        for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
+            if (!BoostService.isGame(this, ai.packageName)) continue;
+            if (pm.getLaunchIntentForPackage(ai.packageName) == null) continue;
+            if (ai.packageName.startsWith("com.cloudbrowser.")) continue;
+            apps.add(ai);
+        }
+        Collections.sort(apps, (a, b) -> {
+            long ua = GameStats.load(prefs, a.packageName).updated, ub = GameStats.load(prefs, b.packageName).updated;
+            if (ua != ub) return Long.compare(ub, ua);
+            return String.valueOf(pm.getApplicationLabel(a)).compareToIgnoreCase(String.valueOf(pm.getApplicationLabel(b)));
+        });
+        gamesList.removeAllViews();
+        if (apps.isEmpty()) { gamesList.addView(text("No games installed yet.", 14, MUTED, false)); return; }
+        for (ApplicationInfo ai : apps) {
+            final String pkg = ai.packageName;
+            GameStats st = GameStats.load(prefs, pkg);
+            LinearLayout item = column();
+            item.setPadding(0, dp(10), 0, dp(10));
+            item.addView(text(String.valueOf(pm.getApplicationLabel(ai)), 16, TEXT, true));
+            item.addView(text(st.summary(), 13, MUTED, false));
+            String tip = st.suggestionText();
+            if (!tip.isEmpty()) item.addView(text(tip, 13, st.suggestion() == 0 ? WARN : st.suggestion() == 3 ? ACCENT : GOOD, false));
+            LinearLayout chips = chips();
+            LinearLayout inner = (LinearLayout) ((HorizontalScrollView) chips.getChildAt(0)).getChildAt(0);
+            int cur = Profiles.get(prefs, pkg);
+            String[] names = new String[Tweaks.PRESET_NAMES.length + 1];
+            names[0] = "Main setting";
+            System.arraycopy(Tweaks.PRESET_NAMES, 0, names, 1, Tweaks.PRESET_NAMES.length);
+            for (int i = 0; i < names.length; i++) {
+                final int preset = i - 1;
+                Button b = button(names[i], false, v -> { Profiles.set(prefs, pkg, preset); refreshGames(); });
+                style(b, cur == preset);
+                if (preset >= 0 && preset == st.suggestion() && cur != preset) b.setText(names[i] + " ★");
+                inner.addView(b, margins(0, 0, 8, 0));
+            }
+            item.addView(chips, margins(0, 6, 0, 0));
+            gamesList.addView(item);
+            View line = new View(this);
+            line.setBackgroundColor(LINE);
+            gamesList.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        }
     }
 
     private void refreshTune() {
