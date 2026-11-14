@@ -97,6 +97,7 @@ async function refreshStatus() {
     $('installPc').classList.toggle('primary', !status.installed || upd);
     $('installPc').disabled = !status.available;
     $('installQuest').disabled = !status.available;
+    $('installBoost').disabled = !status.available;
     $('notes').disabled = !status.page;
     $('pcHint').textContent = !status.windows ? 'Cloud Desktop is for Windows PCs.'
       : status.installed ? `Installed${status.installedVersion ? ` (${status.installedVersion})` : ''}.${upd ? ` Version ${status.latest} is out.` : ' Up to date.'}`
@@ -119,6 +120,7 @@ $('desktop').onclick = e => act(e.target, async () => {
 });
 $('installPc').onclick = e => act(e.target, () => cloud.call('cd-install-pc'));
 $('installQuest').onclick = e => act(e.target, () => cloud.call('cd-install-quest'));
+$('installBoost').onclick = e => act(e.target, () => cloud.call('cd-install-boost'));
 $('notes').onclick = () => cloud.call('cd-release-page');
 $('advanced').onclick = e => act(e.target, () => cloud.call('cd-advanced'));
 $('credits').onclick = () => { $('creditsText').hidden = !$('creditsText').hidden; };

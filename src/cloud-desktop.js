@@ -43,7 +43,7 @@ class CloudDesktop {
     const rel = (await r.json()).find(x => /^cloud-desktop-v/.test(x.tag_name) && !x.draft);
     if (!rel) return null;
     const asset = re => (rel.assets.find(a => re.test(a.name)) || {}).browser_download_url || null;
-    return { version: rel.tag_name.replace('cloud-desktop-v', ''), pcZip: asset(/^CloudDesktop-PC-.*\.zip$/), questApk: asset(/^CloudDesktop-Quest-.*\.apk$/), page: rel.html_url };
+    return { version: rel.tag_name.replace('cloud-desktop-v', ''), pcZip: asset(/^CloudDesktop-PC-.*\.zip$/), questApk: asset(/^CloudDesktop-Quest-.*\.apk$/), boostApk: asset(/^CloudBoost-.*\.apk$/), page: rel.html_url };
   }
 
   exePath() {
@@ -727,19 +727,21 @@ class CloudDesktop {
   }
 
   /** Install (or update) the Quest app over USB. */
-  installQuest(progress) {
+  installQuest(progress, which = 'desktop') {
+    const boost = which === 'boost';
     return this.guard(async () => {
       const latest = await this.latest();
-      if (!latest || !latest.questApk) throw new Error('No Cloud Desktop release is out yet.');
+      const url = latest && (boost ? latest.boostApk : latest.questApk);
+      if (!url) throw new Error(boost ? 'Cloud Boost isn’t out yet. Try again in a few minutes.' : 'No Cloud Desktop release is out yet.');
       const adb = await this.adb(progress);
       progress('Looking for your Quest…');
       const quest = await this.pickQuest(adb);
-      const apk = path.join(this.dir, 'CloudDesktop-Quest.apk');
-      await this.download(latest.questApk, apk, progress, 'Downloading the Quest app');
+      const apk = path.join(this.dir, boost ? 'CloudBoost.apk' : 'CloudDesktop-Quest.apk');
+      await this.download(url, apk, progress, boost ? 'Downloading Cloud Boost' : 'Downloading the Quest app');
       progress('Installing on your Quest…');
       const out = await run(adb, ['-s', quest.serial, 'install', '-r', apk], { timeout: 300000 });
       if (!/Success/i.test(out)) throw new Error('The Quest said: ' + out.trim().slice(-300));
-      progress(`Installed. On your Quest: App Library › Unknown Sources › Cloud Desktop.`);
+      progress(`Installed. On your Quest: App Library › Unknown Sources › ${boost ? 'Cloud Boost' : 'Cloud Desktop'}.`);
       return true;
     });
   }
