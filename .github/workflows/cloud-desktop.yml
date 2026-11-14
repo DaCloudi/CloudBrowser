@@ -183,16 +183,57 @@ jobs:
           name: pc-download
           path: CloudDesktop-PC-*.zip
 
+  boost-app:
+    # Cloud Boost: Quest performance tuner (on-headset, pairs with Wireless debugging).
+    # Built inside libadb-android (Apache-2.0 / GPL-3.0), which provides the :libadb module.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+      - name: Build Cloud Boost
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          git clone https://github.com/MuntashirAkon/libadb-android boost-build
+          cd boost-build
+          git checkout c849886ebc6d48e7b46d967e78a6bb65c90c3b74
+          rm -rf app
+          cp -r ../cloud-desktop/boost/app app
+          export BOOST_VERSION_NAME="$VER"
+          export BOOST_VERSION_CODE=$(echo "$VER" | awk -F. '{print $1*10000+$2*100+$3}')
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleRelease
+          ls -la app/build/outputs/apk/release/
+      - name: Sign with Cloud Desktop's key
+        run: |
+          VER=$(cat cloud-desktop/VERSION)
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          APK=$(ls boost-build/app/build/outputs/apk/release/*.apk | head -1)
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks cloud-desktop/cloud-desktop.keystore --ks-pass pass:alvrclient --out "CloudBoost-$VER.apk" aligned.apk
+          "$BT/apksigner" verify "CloudBoost-$VER.apk"
+          "$BT/aapt" dump badging "CloudBoost-$VER.apk" | grep -E "package:|application-label:" | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boost-app
+          path: CloudBoost-*.apk
+
   release:
     if: github.ref == 'refs/heads/main'
-    needs: [quest-app, package]
+    needs: [quest-app, package, boost-app]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
-          pattern: '{quest-app,pc-download}'
+          pattern: '{quest-app,pc-download,boost-app}'
           merge-multiple: true
       - name: Publish
         env:
@@ -206,4 +247,5 @@ jobs:
           Based on ALVR $ALVR (https://github.com/alvr-org/ALVR, MIT licence).
 
           - CloudDesktop-PC-$VER.zip: the PC streamer (needs SteamVR), with desktop mode (Desktop+ $(cat cloud-desktop/DESKTOPPLUS_VERSION), https://github.com/elvissteinjr/DesktopPlus, GPL-3.0).
-          - CloudDesktop-Quest-$VER.apk: the Quest app (install by sideloading, or from CloudBrowser: Settings, VR, Cloud Desktop)."
+          - CloudDesktop-Quest-$VER.apk: the Quest app (install by sideloading, or from CloudBrowser: Settings, VR, Cloud Desktop).
+          - CloudBoost-$VER.apk: Cloud Boost, a Quest performance tuner that runs on the headset (uses libadb-android, https://github.com/MuntashirAkon/libadb-android, Apache-2.0)."

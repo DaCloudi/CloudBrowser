@@ -1,0 +1,40 @@
+// Cloud Boost: Quest performance tuner. Built inside a checkout of libadb-android (see the
+// boost-app job in .github/workflows/cloud-desktop.yml), which provides the :libadb module.
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    compileSdk 35
+    namespace "com.cloudbrowser.boost"
+
+    defaultConfig {
+        applicationId "com.cloudbrowser.boost"
+        minSdk 29
+        targetSdk 32
+        versionCode Integer.parseInt(System.getenv("BOOST_VERSION_CODE") ?: "1")
+        versionName System.getenv("BOOST_VERSION_NAME") ?: "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signed afterwards with Cloud Desktop's key (apksigner in CI).
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation project(path: ':libadb')
+    implementation 'androidx.annotation:annotation:1.9.1'
+    implementation 'com.github.MuntashirAkon:sun-security-android:1.1'
+    implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:6.1'
+}
