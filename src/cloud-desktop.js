@@ -46,9 +46,13 @@ class CloudDesktop {
 
   /** The newest Cloud Desktop release: { version, pcZip, questApk, page } or null. */
   async latest() {
-    const r = await this.session().fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { Accept: 'application/vnd.github+json' } });
+    const r = await this.session().fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
     if (!r.ok) throw new Error(`GitHub said ${r.status}`);
-    const rel = (await r.json()).find(x => /^cloud-desktop-v/.test(x.tag_name) && !x.draft);
+    // GitHub's list isn't reliably newest-first, so pick the highest version (1.10.0 > 1.9.0).
+    const ver = t => t.replace('cloud-desktop-v', '').split('.').map(n => parseInt(n, 10) || 0);
+    const newer = (a, b) => { const x = ver(a), y = ver(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+    const rel = (await r.json()).filter(x => /^cloud-desktop-v\d/.test(x.tag_name) && !x.draft)
+      .reduce((best, x) => (!best || newer(x.tag_name, best.tag_name) ? x : best), null);
     if (!rel) return null;
     const asset = re => (rel.assets.find(a => re.test(a.name)) || {}).browser_download_url || null;
     return { version: rel.tag_name.replace('cloud-desktop-v', ''), pcZip: asset(/^CloudDesktop-PC-.*\.zip$/), questApk: asset(/^CloudDesktop-Quest-.*\.apk$/), boostApk: asset(/^CloudBoost-.*\.apk$/), page: rel.html_url };
