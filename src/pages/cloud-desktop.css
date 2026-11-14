@@ -71,3 +71,11 @@
 .sound .grow { flex: 1; }
 .level { height: 8px; border-radius: 4px; background: var(--field); margin-top: 10px; overflow: hidden; max-width: 420px; }
 .level i { display: block; height: 100%; width: 0; background: #3ba55d; border-radius: 4px; transition: width .08s linear; }
+
+/* ---------- health check ---------- */
+.hc { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.hc:first-child { border-top: 0; }
+.hc .dot { width: 10px; height: 10px; border-radius: 5px; flex: none; background: #3ba55d; }
+.hc.bad .dot { background: #f0b232; }
+.hc .txt { flex: 1; }
+.hc .txt small { display: block; color: var(--muted); font-size: 12px; }

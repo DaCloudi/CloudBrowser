@@ -154,6 +154,7 @@ function renderAudio() {
   $('autoQuality').checked = audio.autoQuality;
   $('passthrough').checked = audio.passthrough;
   $('menuShortcut').checked = audio.menuShortcut;
+  $('autoUpdate').checked = audio.autoUpdate !== false;
   if (!audio.room) $('ptHint').textContent = 'Update Cloud Desktop on this PC to get this. Your real room around your desktop screens (passthrough), like Virtual Desktop.';
   $('vbRow').hidden = !(audio.mic && !audio.vbcable);
   $('micHint').textContent = !audio.mic ? 'Off. Your Quest’s mic won’t reach this PC.'
@@ -165,7 +166,7 @@ function renderAudio() {
 }
 async function loadAudio() { try { audio = await cloud.call('cd-audio'); renderAudio(); } catch {} }
 $('mic').onchange = async () => { audio = await cloud.call('cd-set-audio', { mic: $('mic').checked }).catch(() => audio); renderAudio(); };
-for (const id of ['passthrough', 'menuShortcut']) {
+for (const id of ['passthrough', 'menuShortcut', 'autoUpdate']) {
   $(id).onchange = async () => { audio = await cloud.call('cd-set-audio', { [id]: $(id).checked }).catch(() => audio); renderAudio(); };
 }
 $('autoQuality').onchange = async () => { audio = await cloud.call('cd-set-audio', { autoQuality: $('autoQuality').checked }).catch(() => audio); renderAudio(); };
@@ -223,7 +224,30 @@ $('testMic').onclick = async () => {
   }
 };
 
-loadAudio();
-refreshStatus();
+// ---------- health check ----------
+async function checkHealth() {
+  const list = await cloud.call('cd-health');
+  const box = $('healthList');
+  box.hidden = false;
+  const bad = list.filter(x => !x.ok).length;
+  box.replaceChildren(
+    h('div', { className: 'verdict ' + (bad ? 'ok' : 'great') }, h('span', { className: 'dot' }), h('b', {}, bad ? `${bad} thing${bad > 1 ? 's' : ''} to fix` : 'Everything looks good')),
+    ...list.map(x => h('div', { className: 'hc' + (x.ok ? '' : ' bad') }, h('span', { className: 'dot' }),
+      h('div', { className: 'txt' }, x.title, x.detail ? h('small', {}, x.detail) : null),
+      x.fix && h('button', { className: 'btn', onclick: e => act(e.target, async () => { await cloud.call('cd-fix', x.fix); await checkHealth(); }) }, x.fix === 'install' ? 'Update' : 'Fix'))));
+}
+$('checkHealth').onclick = e => act(e.target, checkHealth);
+
+// Update automatically: when a newer version is out and SteamVR isn't running.
+let autoUpdateTried = false;
+async function maybeAutoUpdate() {
+  if (autoUpdateTried || !status || !audio || audio.autoUpdate === false) return;
+  if (!status.installed || !status.available || !status.latest || status.installedVersion === status.latest || status.running) return;
+  autoUpdateTried = true;
+  setProgress(`Updating Cloud Desktop to ${status.latest}…`);
+  await act($('installPc'), () => cloud.call('cd-install-pc'));
+}
+
+loadAudio().then(() => refreshStatus()).then(() => maybeAutoUpdate());
 tick();
 setInterval(() => { if (!document.hidden) tick(); }, 1000);

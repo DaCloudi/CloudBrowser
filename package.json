@@ -1,7 +1,7 @@
 {
   "name": "cloudbrowser",
   "productName": "CloudBrowser",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "A lightweight, private web browser that searches with DuckDuckGo.",
   "main": "src/main.js",
   "author": "CloudBrowser",

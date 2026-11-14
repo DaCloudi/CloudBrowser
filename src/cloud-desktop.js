@@ -594,6 +594,66 @@ class CloudDesktop {
     await this.setPassthrough(false).catch(() => {});
   }
 
+  // ---------- health check ----------
+
+  /** Check the usual things that stop Cloud Desktop working. Each problem can carry a fix. */
+  async health() {
+    const out = [];
+    const add = (id, ok, title, detail, fix) => out.push({ id, ok, title, detail, fix: ok ? null : fix || null });
+    if (process.platform !== 'win32') { add('windows', false, 'Windows needed', 'Cloud Desktop runs on Windows PCs.'); return out; }
+
+    const installed = !!this.driverDir();
+    let latest = null;
+    try { latest = await this.latest(); } catch {}
+    add('installed', installed, installed ? 'Installed on this PC' : 'Not installed on this PC', installed ? '' : 'Install Cloud Desktop to start.', 'install');
+    if (installed && latest && latest.version) {
+      const cur = this.installedVersion();
+      add('version', cur === latest.version, cur === latest.version ? `Up to date (${cur})` : `Update available: ${cur || '?'} → ${latest.version}`, cur === latest.version ? '' : 'Newer versions fix problems and add features.', 'install');
+    }
+
+    const steam = this.steamvrInstalled();
+    add('steamvr', steam, steam ? 'SteamVR is set up' : 'SteamVR isn’t set up', steam ? '' : 'Install SteamVR from Steam and open it once. Cloud Desktop runs inside it.');
+
+    if (steam && installed) {
+      let drivers = [];
+      try { drivers = JSON.parse(fs.readFileSync(this.openvrPathsFile(), 'utf8').replace(/^\uFEFF/, '')).external_drivers || []; } catch {}
+      const mine = this.driverDir().toLowerCase();
+      const registered = drivers.some(d => path.normalize(String(d)).toLowerCase() === path.normalize(mine));
+      add('driver', registered, registered ? 'SteamVR knows about Cloud Desktop' : 'SteamVR doesn’t know about Cloud Desktop yet', registered ? '' : 'Connect does this for you, or fix it now.', 'driver');
+      const others = drivers.filter(d => /alvr/i.test(path.basename(String(d))) || fs.existsSync(path.join(String(d), 'bin', 'win64', 'driver_alvr_server.dll')))
+        .filter(d => path.normalize(String(d)).toLowerCase() !== path.normalize(mine));
+      add('otheralvr', !others.length, others.length ? 'Another copy of ALVR is set up in SteamVR' : 'No other ALVR copies', others.length ? 'Two copies fight over the same network ports. Fix removes the other one from SteamVR (its files stay).' : '', 'driver');
+      const vd = drivers.some(d => /virtual desktop/i.test(String(d)));
+      if (vd) add('vd', true, 'Virtual Desktop is also installed', 'That’s fine. Just don’t run the Virtual Desktop Streamer and Cloud Desktop at the same time.');
+    }
+
+    if (installed) {
+      const session = this.readSession();
+      const wired = !!(session && session.client_connections && session.client_connections[WIRED]);
+      add('wired', !session || wired, !session || wired ? 'USB cable ready' : 'USB cable isn’t set up', !session || wired ? '' : 'Older settings were missing the cable entry.', 'wired');
+      const fw = await run('netsh.exe', ['advfirewall', 'firewall', 'show', 'rule', 'name=SteamVR ALVR vrserver'], { timeout: 15000 }).then(() => true, () => false);
+      add('firewall', fw, fw ? 'Windows firewall lets Wi-Fi through' : 'Windows firewall may block Wi-Fi', fw ? '' : 'The USB cable works anyway. Fix asks Windows for permission once.', 'firewall');
+      add('desktopmode', !!(this.desktopModePath() && this.roomPath() && this.toolPath()), this.desktopModePath() && this.toolPath() ? 'Desktop mode ready' : 'Desktop mode needs an update', '', 'install');
+    }
+
+    const p = this.prefs();
+    if (p.mic) {
+      const vb = await this.vbCableInstalled(true);
+      add('mic', vb, vb ? 'Headset microphone ready (VB-Cable)' : 'Headset microphone needs VB-Cable', vb ? '' : 'A free virtual microphone Windows needs for your Quest’s mic.', 'vbcable');
+    }
+    return out;
+  }
+
+  /** Fix one health-check problem. */
+  async fix(id, progress = () => {}) {
+    if (id === 'install') return this.installPc(progress);
+    if (id === 'driver') { const r = this.registerDriver(); progress(r.removedOthers ? 'Done. The other ALVR copy was removed from SteamVR. Restart SteamVR if it’s open.' : 'Done. Restart SteamVR if it’s open.'); return true; }
+    if (id === 'wired') { this.ensureWiredInFile(); if (await this.ping()) await this.request({ UpdateClientList: { hostname: WIRED, action: { AddIfMissing: { trusted: true, manual_ips: [] } } } }).catch(() => {}); return true; }
+    if (id === 'firewall') { this.savePrefs({ firewall: false }); await this.ensureFirewall(progress); return true; }
+    if (id === 'vbcable') return this.installVbCable(progress);
+    throw new Error('Nothing to fix for that.');
+  }
+
   /** Turn the headset's green-to-room chroma key on or off (it changes live, no restart). */
   async setPassthrough(on) {
     this._passthrough = !!on;
@@ -724,7 +784,7 @@ class CloudDesktop {
   prefsFile() { return path.join(this.dir, 'prefs.json'); }
   prefs() {
     if (!this._prefs) { try { this._prefs = JSON.parse(fs.readFileSync(this.prefsFile(), 'utf8')); } catch { this._prefs = {}; } }
-    return { mic: true, lowDelay: true, autoQuality: true, passthrough: true, menuShortcut: true, lastCable: null, lastVia: null, ...this._prefs };
+    return { mic: true, lowDelay: true, autoQuality: true, passthrough: true, menuShortcut: true, autoUpdate: true, lastCable: null, lastVia: null, ...this._prefs };
   }
   savePrefs(change) {
     this._prefs = { ...this.prefs(), ...change };
@@ -747,12 +807,12 @@ class CloudDesktop {
 
   async audioStatus() {
     const p = this.prefs();
-    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, autoQuality: p.autoQuality, passthrough: p.passthrough, menuShortcut: p.menuShortcut, room: !!this.roomPath(), lastCable: p.lastCable, lastVia: p.lastVia, applied: this._audioApplied || null };
+    return { vbcable: await this.vbCableInstalled(), mic: p.mic, lowDelay: p.lowDelay, autoQuality: p.autoQuality, passthrough: p.passthrough, menuShortcut: p.menuShortcut, autoUpdate: p.autoUpdate, room: !!this.roomPath(), lastCable: p.lastCable, lastVia: p.lastVia, applied: this._audioApplied || null };
   }
 
   async setAudio(change) {
     const pick = {};
-    for (const k of ['mic', 'lowDelay', 'autoQuality', 'passthrough', 'menuShortcut']) if (change[k] !== undefined) pick[k] = !!change[k];
+    for (const k of ['mic', 'lowDelay', 'autoQuality', 'passthrough', 'menuShortcut', 'autoUpdate']) if (change[k] !== undefined) pick[k] = !!change[k];
     this.savePrefs(pick);
     await this.applyAudio().catch(e => this.log && this.log('cloud desktop: settings', e.message));
     return await this.audioStatus();

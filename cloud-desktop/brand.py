@@ -165,6 +165,14 @@ if n != 1:
 p.write_text(t2, encoding="utf-8")
 changes.append("server_core: SteamVR restart request always sent")
 
+# Newer Quest software no longer prints "mResumed" for the app, so ALVR's USB cable check failed
+# every second ("Failed to find resumed state line") and the cable rarely connected. If the app
+# is running, treat it as ready.
+edit("alvr/adb/src/commands.rs", [
+    ('        Err(anyhow!("Failed to find resumed state line"))',
+     '        Ok(true) // Cloud Desktop: the app is running; newer Quest software omits this line'),
+])
+
 # With a phone, an emulator (BlueStacks) or the Quest's Wi-Fi debugging also connected, ALVR
 # picked whichever came first. Use the device on the USB cable.
 edit("alvr/adb/src/lib.rs", [

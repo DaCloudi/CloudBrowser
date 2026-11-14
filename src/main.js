@@ -3428,6 +3428,8 @@ pageHandle('cd-trust', (_ctx, hostname) => cd().trust(hostname));
 pageHandle('cd-forget', (_ctx, hostname) => cd().forget(hostname));
 pageHandle('cd-advanced', () => cd().advanced());
 pageHandle('cd-check-cable', (ctx) => cd().checkCable(cdProgress(ctx)));
+pageHandle('cd-health', () => cd().health());
+pageHandle('cd-fix', (ctx, id) => cd().fix(String(id), cdProgress(ctx)));
 pageHandle('cd-audio', () => cd().audioStatus());
 pageHandle('cd-set-audio', (_ctx, change) => cd().setAudio(change || {}));
 pageHandle('cd-install-vbcable', (ctx) => cd().installVbCable(cdProgress(ctx)));
@@ -4235,6 +4237,7 @@ async function smokeTest() {
     openInternal(w, 'settings', '#vr');
     await wait(2500);
     const st = activeTab(w);
+    S('cloud desktop: health', JSON.stringify((await cd().health().catch(e => [{ error: e.message }])).map(x => [x.id, x.ok, x.fix])));
     S('cloud desktop: settings row', await st.view.webContents.executeJavaScript(`document.getElementById('cdStatus').textContent + ' | ' + document.getElementById('cdOpen').textContent`).catch(e => e.message));
     closeTab(st.id);
   });

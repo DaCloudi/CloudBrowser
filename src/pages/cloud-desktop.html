@@ -38,6 +38,15 @@
       <div class="tile"><b id="tBattery">–</b><span id="tBatteryLabel">battery</span></div>
     </div>
 
+    <h3>Health check</h3>
+    <section class="cable" id="health">
+      <div class="cable-top">
+        <div><div class="label">Check everything</div><div class="hint">Looks for the usual things that stop Cloud Desktop working, with a one-click fix for each.</div></div>
+        <button class="btn" id="checkHealth">Check everything</button>
+      </div>
+      <div class="cable-result" id="healthList" hidden></div>
+    </section>
+
     <h3>Headsets</h3>
     <section class="list" id="headsets"><div class="empty-row">Connect, then open Cloud Desktop on your Quest. It appears here.</div></section>
 
@@ -102,6 +111,11 @@
         <button class="btn" id="installQuest">Install on my Quest</button></div>
       <div class="row"><div><div class="label">SteamVR</div><div class="hint" id="steamHint">Checking…</div></div>
         <button class="btn" id="notes">What’s new</button></div>
+    </section>
+
+    <section class="sound">
+      <label class="row"><div><div class="label">Update automatically</div><div class="hint">Installs new Cloud Desktop versions on this PC by itself when you open this page and SteamVR isn’t running.</div></div>
+        <input type="checkbox" class="switch" id="autoUpdate"></label>
     </section>
 
     <p class="foot muted small">Cloud Desktop is made from open-source software. <button class="linkish" id="credits">Credits</button></p>
