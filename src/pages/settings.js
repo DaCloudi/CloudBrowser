@@ -221,14 +221,3 @@ cloud.on('settings', s => { if (info) { info.settings = s; fill(s); renderAdbloc
 
 load();
 
-// ---------- Cloud Desktop (everything else is on cloud://cloud-desktop) ----------
-(() => {
-  const st = $('cdStatus');
-  $('cdOpen').onclick = () => cloud.call('cd-open');
-  cloud.call('cd-status').then(s => {
-    if (!s.windows) { st.textContent = 'Cloud Desktop is for Windows PCs.'; return; }
-    st.textContent = s.installed
-      ? `Installed${s.installedVersion ? ` (${s.installedVersion})` : ''}${s.latest && s.installedVersion && s.latest !== s.installedVersion ? `. Version ${s.latest} is out` : ''}${s.running ? '. Running now' : ''}.`
-      : (s.available ? 'Not installed on this PC yet.' : 'Couldn’t check for Cloud Desktop right now.');
-  }).catch(e => { st.textContent = e.message; });
-})();

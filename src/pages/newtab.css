@@ -167,3 +167,41 @@ body.incognito .site .ico { background: #eef2f7 !important; }
 #customize, #panel, #dialog { box-shadow: 0 0 0 1px #19212b, 0 12px 32px rgba(0,0,0,.5); border-radius: 10px; }
 #panel, #dialog { background: #0c1624; }
 .btn.primary { background: #ffffff; border-color: #ffffff; color: #07101b; font-weight: 600; }
+
+/* =====================================================================
+   Chrome-style new tab page: big name, a round search box, and
+   shortcut tiles with round icons that light up when you point at them.
+   ===================================================================== */
+:root { --page: #101a2a; --field: #1c2a3f; --card-hover: rgba(255,255,255,.08); --text: #e8edf4; --muted: #a3afbf; }
+body.incognito { --page: #1a1426; --field: #2d2540; }
+main { padding-top: 16vh; max-width: 584px; }
+.brand { flex-direction: column; gap: 10px; margin-bottom: 28px; }
+.brand img { width: 72px; height: 72px; filter: none; }
+.brand h1 { font-size: 40px; font-weight: 500; letter-spacing: -.5px; }
+#search {
+  height: 46px; border-radius: 23px; border: 0; background: var(--field); padding: 0 6px 0 18px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.28);
+}
+#search:hover { background: color-mix(in srgb, var(--field) 88%, #fff 8%); }
+#search:focus-within { border: 0; box-shadow: 0 0 0 2px var(--accent), 0 1px 6px rgba(0,0,0,.28); }
+#q { font-size: 16px; }
+#search button { width: 34px; height: 34px; border-radius: 50%; background: transparent; color: var(--muted); }
+#search button:hover { background: var(--card-hover); color: var(--text); }
+#sites { grid-template-columns: repeat(5, 112px); justify-content: center; gap: 4px; margin-top: 32px; }
+.site {
+  width: 112px; height: 112px; padding: 16px 6px 8px; gap: 10px; border-radius: 6px;
+  background: transparent; box-shadow: none !important; transform: none !important;
+}
+.site:hover { background: var(--card-hover); }
+.site .ico { width: 48px; height: 48px; background: #2a3a52 !important; }
+.site .ico span { color: #e8edf4; }
+.site .name { font-size: 13px; color: var(--text); }
+.site .x { top: 4px; right: 4px; }
+.site.add .ico { background: #2a3a52 !important; border: 0; }
+.site.add .ico span { color: var(--text); }
+@media (max-width: 640px) { #sites { grid-template-columns: repeat(3, 112px); } }
+#customize { border-radius: 18px; background: var(--field); box-shadow: none; }
+#customize:hover { background: color-mix(in srgb, var(--field) 85%, #fff 10%); }
+#panel, #dialog { background: #1b2739; border-radius: 12px; }
+.btn, .btn.primary { border-radius: 18px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

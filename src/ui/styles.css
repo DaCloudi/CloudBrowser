@@ -494,3 +494,128 @@ svg .fill, svg.fill { fill: currentColor; stroke: none; }
 #lite-btn.show { display: flex; }
 #lite-btn:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 #lite-btn svg { width: 14px; height: 14px; }
+
+/* =====================================================================
+   Chrome look: Chrome's tab shapes, toolbar and address bar, in
+   CloudBrowser's navy. The frame is darker; the active tab is the same
+   colour as the toolbar so they join up, like Chrome.
+   ===================================================================== */
+:root {
+  --strip: #08101c;            /* window frame behind the tabs */
+  --strip-text: #aeb9c7;
+  --strip-hover: rgba(255,255,255,.07);
+  --bar: #172234;              /* toolbar and the active tab */
+  --tab-active: #172234;
+  --tab-hover: rgba(255,255,255,.07);
+  --field: #0b1626;            /* address bar */
+  --field-focus: #0b1626;
+  --field-border: #2b3a50;
+  --hover: rgba(255,255,255,.09);
+  --selected: rgba(255,255,255,.11);
+  --line: #223047;
+  --popup: #1b2739;
+  --popup-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 8px 28px rgba(0,0,0,.55);
+  --text: #e8edf4;
+  --muted: #a3afbf;
+}
+body.incognito {
+  --strip: #120e1a; --bar: #2a2238; --tab-active: #2a2238; --field: #1a1426; --field-focus: #1a1426;
+  --popup: #2d2540;
+}
+
+#chrome { border-bottom: 0; background: var(--bar); }
+
+/* ---- tab strip ---- */
+#tabstrip { height: 42px; align-items: flex-end; padding: 0 146px 0 8px; background: var(--strip); }
+#tabs { align-items: flex-end; gap: 0; padding: 0 10px; }
+#tabs .tab {
+  height: 34px; border-radius: 10px 10px 0 0; padding: 0 8px 0 14px; color: var(--strip-text); background: transparent;
+  box-shadow: none; margin: 0;
+}
+/* Chrome's hover: a rounded patch inside the tab, not the whole shape */
+#tabs .tab:hover:not(.active) { background: transparent; color: var(--text); }
+#tabs .tab:not(.active)::after {
+  content: ""; position: absolute; inset: 3px 2px 4px; border-radius: 8px; background: transparent; z-index: -1; transition: background .12s;
+}
+#tabs .tab:hover:not(.active)::after { background: var(--tab-hover); }
+#tabs .tab { isolation: isolate; }
+/* The active tab joins the toolbar, with curved "feet" at the bottom corners */
+#tabs .tab.active { background: var(--tab-active); color: var(--text); z-index: 1; }
+#tabs .tab.active::before, #tabs .tab.active::after {
+  content: ""; position: absolute; bottom: 0; width: 10px; height: 10px; pointer-events: none; z-index: 1;
+  background: radial-gradient(circle at var(--cx) 0, transparent 9.5px, var(--tab-active) 10px);
+}
+#tabs .tab.active::before { left: -10px; --cx: 0; }
+#tabs .tab.active::after { right: -10px; --cx: 100%; inset: auto -10px 0 auto; border-radius: 0; }
+/* thin separators between tabs that aren't active or hovered */
+#tabs .tab:not(.active):not(:hover) + .tab:not(.active):not(:hover)::before {
+  content: ""; display: block; position: absolute; left: 0; top: 10px; bottom: 10px; width: 1px;
+  background: color-mix(in srgb, var(--strip-text) 30%, transparent);
+}
+#tabs .tab .close { width: 18px; height: 18px; }
+#tabs .tab .close:hover { background: rgba(255,255,255,.14) !important; }
+#newtab { width: 28px; height: 28px; border-radius: 50%; margin: 0 0 3px 6px !important; color: var(--strip-text) !important; }
+#newtab:hover { background: var(--strip-hover) !important; }
+#vertical-toggle { margin-bottom: 4px !important; border-radius: 50% !important; }
+#tabs .tab.pinned { padding: 0; }
+
+/* ---- toolbar ---- */
+#toolbar { height: 44px; gap: 2px; padding: 0 6px; background: var(--bar); }
+button.icon { width: 34px; height: 34px; border-radius: 50%; color: var(--text); }
+button.icon:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+button.icon.small { width: 28px; height: 28px; border-radius: 50%; }
+#back:disabled, #forward:disabled { opacity: .35; }
+
+/* ---- address bar (omnibox) ---- */
+#addressbox {
+  height: 34px; margin: 0 6px; padding: 0 4px 0 6px; gap: 4px;
+  background: var(--field); border: 0; border-radius: 17px; box-shadow: none;
+}
+#addressbox:hover { background: color-mix(in srgb, var(--field) 80%, #ffffff 6%); }
+#addressbox:focus-within { background: var(--field); box-shadow: 0 0 0 2px var(--accent); }
+#siteicon { width: 26px; height: 26px; border-radius: 50%; }
+#siteicon:hover { background: var(--hover); }
+#address { font-size: 14.5px; padding-left: 2px; }
+#star.on svg { fill: var(--accent); stroke: var(--accent); }
+
+/* ---- pills, chips, menus ---- */
+.vpn-pill { height: 30px; border-radius: 15px; border-color: var(--field-border); }
+.pill-btn { border-radius: 15px; }
+.pill-btn.primary, #update { background: var(--accent); border-color: var(--accent); color: #fff; border-radius: 15px; }
+.pill-btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); }
+#suggestions { border-radius: 0 0 16px 16px; padding: 4px 0 8px; }
+.sg { height: 36px; }
+#vpn-panel, #ext-panel, #media-panel { border-radius: 12px; }
+
+/* ---- bookmarks bar ---- */
+#bookmarksbar { height: 30px; padding: 0 8px 4px; background: var(--bar); }
+.bm { height: 26px; border-radius: 13px; padding: 0 10px; }
+
+/* ---- the line between the browser and the page ---- */
+#chrome::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: rgba(0,0,0,.35); }
+
+/* ---- Chrome-style three-dot menu ---- */
+#app-menu {
+  position: fixed; z-index: 30; width: 300px; padding: 8px 0; border-radius: 12px;
+  background: var(--popup); box-shadow: var(--popup-shadow); color: var(--text);
+  max-height: calc(100vh - 60px); overflow-y: auto;
+}
+#app-menu[hidden] { display: none; }
+.am-item {
+  display: flex; align-items: center; gap: 14px; width: 100%; height: 32px; padding: 0 16px 0 14px;
+  border: 0; background: transparent; color: var(--text); text-align: left; cursor: default;
+}
+.am-item:hover:not(:disabled) { background: var(--selected); }
+.am-item:disabled { opacity: .4; }
+.am-item svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.am-item .am-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-item .am-key { color: var(--muted); font-size: 12px; }
+.am-item .am-check { width: 18px; color: var(--accent); }
+.am-sep { height: 1px; margin: 7px 0; background: rgba(255,255,255,.08); }
+.am-zoom { display: flex; align-items: center; height: 36px; padding: 0 8px 0 46px; gap: 2px; }
+.am-zoom .am-label { flex: 1; }
+.am-zoom button { width: 34px; height: 30px; border: 0; border-radius: 15px; background: transparent; color: var(--text); display: grid; place-items: center; }
+.am-zoom button:hover { background: var(--selected); }
+.am-zoom button svg { width: 16px; height: 16px; }
+.am-zoom .am-pct { min-width: 48px; text-align: center; }
+#menu.open { background: var(--hover); }

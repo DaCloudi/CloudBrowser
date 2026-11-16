@@ -20,7 +20,6 @@ const { Store, flushAll } = require('./store');
 const { Vpn } = require('./vpn');
 const { DiscordLite, isDiscordHost } = require('./discord-lite');
 const { baseDomain, companyOf } = require('./trackers');
-const { CloudDesktop } = require('./cloud-desktop');
 
 let extLib = null;
 let webStoreLib = null;
@@ -36,7 +35,7 @@ const SMOKE = process.env.CLOUD_SMOKE === '1';
 const NORMAL_PARTITION = 'persist:cloudbrowser';
 const PRIVATE_PARTITION = 'cloudbrowser-private'; // no "persist:" = memory only
 const PAGES_DIR = path.join(__dirname, 'pages');
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'reader', 'privacy', 'cloud-desktop'];
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'reader', 'privacy'];
 const TITLEBAR_HEIGHT = 40;
 
 // Shown on the extensions page for one-click install.
@@ -1082,8 +1081,6 @@ function setupPermissions(sess, isPrivate) {
   sess.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     try {
       if (AUTO_ALLOW.has(permission)) return callback(true);
-      // CloudBrowser's own pages (the Cloud Desktop mic test) may listen to the microphone.
-      if (permission === 'media' && String(details.requestingUrl || wc.getURL()).startsWith('cloud://')) return callback(true);
       if (!PROMPT_PERMISSIONS[permission] || SILENT_DENY.has(permission)) { if (SMOKE) log('permission refused:', permission); return callback(false); }
       const origin = originOf(details.requestingUrl || wc.getURL());
       // Like Chrome, don't let ads and other embedded frames from another site ask.
@@ -1131,7 +1128,6 @@ function setupPermissions(sess, isPrivate) {
 
   sess.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
     if (AUTO_ALLOW.has(permission)) return true;
-    if (permission === 'media' && String(requestingOrigin || '').startsWith('cloud://')) return true;
     if (PROMPT_PERMISSIONS[permission]) return saved(originOf(requestingOrigin))[permission] === 'allow';
     return true; // other internal checks keep Electron's default
   });
@@ -3010,7 +3006,58 @@ uiOn('reload', w => activeTab(w)?.view.webContents.reload());
 uiOn('stop', w => activeTab(w)?.view.webContents.stop());
 uiOn('home', w => { const t = activeTab(w); if (t) load(t.view.webContents, homeUrl()); });
 uiOn('install-update', () => autoUpdater && autoUpdater.quitAndInstall());
-uiOn('menu', w => showMainMenu(w));
+// Chrome-style three-dot menu, drawn by the browser UI (src/ui) from this state.
+function appMenuState(w) {
+  const t = activeTab(w);
+  const wc = t && t.view.webContents;
+  return {
+    zoom: wc ? Math.round(Math.pow(1.2, wc.getZoomLevel()) * 100) : 100,
+    hasPage: !!wc, closed: w.closedTabs.length > 0, readerable: !!(t && t.readerable),
+    translatable: !!(t && /^https:/.test(tabUrl(t))), incognito: !!w.incognito,
+    vertical: !!settings.data.verticalTabs, bookmarksBar: !!settings.data.showBookmarksBar,
+    fullscreen: w.win.isFullScreen(), notDefault: isDefaultBrowser === false,
+  };
+}
+const APP_MENU_ACTIONS = {
+  'new-tab': w => { createTab(w); focusAddress(w); },
+  'new-window': () => newWindow(false),
+  'new-incognito': () => newWindow(true),
+  'reopen': w => reopenClosedTab(w),
+  'history': w => openInternal(w, 'history'),
+  'downloads': w => openInternal(w, 'downloads'),
+  'bookmarks': w => openInternal(w, 'bookmarks'),
+  'extensions': w => openInternal(w, 'extensions'),
+  'passwords': w => openBitwarden(w),
+  'privacy': w => openInternal(w, 'privacy'),
+  'bookmarks-bar': () => setSetting('showBookmarksBar', !settings.data.showBookmarksBar),
+  'vertical-tabs': () => setSetting('verticalTabs', !settings.data.verticalTabs),
+  'zoom-in': (w, t) => t && zoom(t.view.webContents, 0.5),
+  'zoom-out': (w, t) => t && zoom(t.view.webContents, -0.5),
+  'zoom-reset': (w, t) => t && zoom(t.view.webContents, 0),
+  'fullscreen': w => setFullscreen(w, !w.win.isFullScreen()),
+  'print': (w, t) => t && t.view.webContents.print(),
+  'find': w => { uiSend(w, 'find-open'); w.ui.webContents.focus(); },
+  'translate': w => showTranslateMenu(w),
+  'reader': (w, t) => t && t.readerable && openReader(t),
+  'screenshot': w => screenshot(w),
+  'pip': (w, t) => t && pictureInPicture(t.view.webContents),
+  'pop-out': (w, t) => t && popOutTab(t),
+  'save-page': (w, t) => t && savePage(w, t.view.webContents),
+  'settings': w => openInternal(w, 'settings'),
+  'clear-data': w => openInternal(w, 'settings', '#privacy'),
+  'make-default': () => makeDefaultBrowser(),
+  'updates': () => checkForUpdates(),
+  'about': w => openInternal(w, 'settings', '#about'),
+  'close-window': w => w.win.close(),
+  'exit': () => quitApp(),
+};
+uiOn('menu', w => uiSend(w, 'app-menu', appMenuState(w)));
+uiOn('menu-action', (w, id) => {
+  const f = APP_MENU_ACTIONS[String(id)];
+  if (!f) return;
+  try { f(w, activeTab(w)); } catch (e) { log('menu action failed', id, e.message); }
+  if (/^zoom-|^bookmarks-bar$|^vertical-tabs$/.test(id)) setTimeout(() => uiSend(w, 'app-menu-state', appMenuState(w)), 60);
+});
 uiOn('toggle-bookmark', w => toggleBookmark(activeTab(w)));
 uiOn('open-bookmark', (w, url, newTab) => {
   const t = activeTab(w);
@@ -3413,32 +3460,6 @@ pageHandle('set-sponsor-categories', (_ctx, cats) => {
 });
 pageHandle('vr-status', () => ({ active: vrActive, mode: settings.data.vrMode }));
 
-// Cloud Desktop (wireless PC streaming to the Quest).
-let cloudDesktop = null;
-function cd() { return cloudDesktop || (cloudDesktop = new CloudDesktop({ session: () => session.fromPartition(NORMAL_PARTITION), log })); }
-const cdProgress = (ctx) => (text) => { try { ctx.tab && ctx.tab.view.webContents.send('page:cd-progress', text); } catch {} };
-pageHandle('cd-status', () => cd().status());
-pageHandle('cd-install-pc', (ctx) => cd().installPc(cdProgress(ctx)));
-pageHandle('cd-install-quest', (ctx) => cd().installQuest(cdProgress(ctx)));
-pageHandle('cd-install-boost', (ctx) => cd().installQuest(cdProgress(ctx), 'boost'));
-pageHandle('cd-setup-boost', (ctx) => cd().setupBoost(cdProgress(ctx)));
-pageHandle('cd-start', () => cd().start());
-pageHandle('cd-connect', (ctx) => cd().connect(cdProgress(ctx)));
-pageHandle('cd-disconnect', () => cd().disconnect());
-pageHandle('cd-live', () => cd().liveStatus());
-pageHandle('cd-trust', (_ctx, hostname) => cd().trust(hostname));
-pageHandle('cd-forget', (_ctx, hostname) => cd().forget(hostname));
-pageHandle('cd-advanced', () => cd().advanced());
-pageHandle('cd-check-cable', (ctx) => cd().checkCable(cdProgress(ctx)));
-pageHandle('cd-health', () => cd().health());
-pageHandle('cd-fix', (ctx, id) => cd().fix(String(id), cdProgress(ctx)));
-pageHandle('cd-audio', () => cd().audioStatus());
-pageHandle('cd-set-audio', (_ctx, change) => cd().setAudio(change || {}));
-pageHandle('cd-install-vbcable', (ctx) => cd().installVbCable(cdProgress(ctx)));
-pageHandle('cd-open', (ctx) => { if (ctx.tab) openInternal(ctx.tab.w, 'cloud-desktop'); return true; });
-pageHandle('cd-desktop-mode', () => cd().desktopMode());
-pageHandle('cd-set-desktop-mode', (_ctx, on) => cd().setDesktopMode(!!on));
-pageHandle('cd-release-page', async (ctx) => { const st = await cd().status(); if (st.page && ctx.tab) createTab(ctx.tab.w, st.page); return !!st.page; });
 pageHandle('passwords', () => ({ manager: settings.data.passwordManager, installed: bitwardenInstalled(), available: !!extensions && !!webStoreLib }));
 pageHandle('open-bitwarden', (ctx) => { openBitwarden(ctx.tab && ctx.tab.w); return true; });
 pageHandle('install-bitwarden', async () => { settings.data.passwordManager = 'bitwarden'; settings.save(); await ensureBitwarden(true); return bitwardenInstalled(); });
@@ -3577,7 +3598,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
     if (SMOKE) setTimeout(smokeTest, 1500);
   });
 
-  app.on('will-quit', () => { if (discordLite) discordLite.stop(); if (cloudDesktop) cloudDesktop.stopWatching(); });
+  app.on('will-quit', () => { if (discordLite) discordLite.stop(); });
   app.on('before-quit', (e) => {
     if (!quitting) { quitting = true; saveSession(true); }
     if (settings && settings.data.clearOnExit && !clearedOnExit) {
@@ -4091,157 +4112,31 @@ async function smokeTest() {
     closeTab(rt.id);
   });
 
-  await step('cloud desktop', async () => {
-    const { CloudDesktop } = require('./cloud-desktop');
-    S('cloud desktop: status', JSON.stringify(await cd().status().catch(e => ({ error: e.message }))));
-
-    // SteamVR driver registration, on a pretend PC: our copy goes in, other ALVR copies come out, other drivers stay.
-    const tmp = path.join(app.getPath('temp'), 'cd-smoke');
-    fs.rmSync(tmp, { recursive: true, force: true });
-    fs.mkdirSync(path.join(tmp, 'CloudDesktop', 'pc'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'driver.vrdrivermanifest'), '{}');
-    fs.mkdirSync(path.join(tmp, 'openvr'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, 'openvr', 'openvrpaths.vrpath'), JSON.stringify({ config: ['C:\\Steam\\config'], external_drivers: ['C:\\Program Files\\ALVR\\alvr_streamer_windows', 'D:\\VD\\driver', 'C:\\x\\ALVR-old'], version: 1 }));
-    const realLocal = process.env.LOCALAPPDATA;
-    process.env.LOCALAPPDATA = tmp;
-    try {
-      const fake = new CloudDesktop({ session: () => session.fromPartition(NORMAL_PARTITION), log });
-      const r = fake.registerDriver();
-      S('cloud desktop: register', JSON.stringify(r), JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp, 'openvr', 'openvrpaths.vrpath'), 'utf8'))));
-      // An older settings file with only a Wi-Fi headset gets the USB cable entry.
-      fs.writeFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'session.json'), JSON.stringify({ client_connections: { '7194.client': { display_name: 'Quest 3', current_ip: null, manual_ips: [], trusted: true, connection_state: 'Disconnected' } }, session_settings: {} }));
-      fake.ensureWiredInFile();
-      S('cloud desktop: wired entry added', JSON.stringify(Object.keys(JSON.parse(fs.readFileSync(path.join(tmp, 'CloudDesktop', 'pc', 'session.json'), 'utf8')).client_connections)));
-    } catch (e) { S('cloud desktop: register FAILED', e.message); }
-    process.env.LOCALAPPDATA = realLocal;
-
-    // A pretend streamer on 127.0.0.1:8082, speaking the same API (needs X-ALVR), with a websocket of events.
-    const crypto = require('crypto');
-    const got = [];
-    const sessionCfg = { client_connections: {
-      'client.wired': { display_name: 'USB cable', current_ip: null, manual_ips: [], trusted: true, connection_state: 'Streaming' },
-      '6421.client.local': { display_name: 'Quest 3', current_ip: '192.168.1.40', manual_ips: [], trusted: false, connection_state: 'Disconnected' } },
-      session_settings: { connection: { web_server_port: 8082 } } };
-    const sockets = [];
-    const frame = (text) => { const p = Buffer.from(text); const hd = p.length < 126 ? Buffer.from([0x81, p.length]) : (() => { const x = Buffer.alloc(4); x[0] = 0x81; x[1] = 126; x.writeUInt16BE(p.length, 2); return x; })(); return Buffer.concat([hd, p]); };
-    const ev = (id, data) => frame(JSON.stringify({ timestamp: '12:00:00', event_type: { id, data } }));
-    const srv = require('http').createServer((req, res) => {
-      if (req.headers['x-alvr'] !== 'true') { res.writeHead(400); return res.end('missing X-ALVR header'); }
-      let body = ''; req.on('data', c => body += c);
-      req.on('end', () => {
-        if (req.url === '/api/version') { res.end('20.14.1'); return; }
-        if (req.url === '/api/dashboard-request') {
-          got.push(body);
-          const q = JSON.parse(body);
-          if (q === 'GetSession') for (const so of sockets) so.write(ev('Session', sessionCfg));
-          if (q.UpdateClientList && q.UpdateClientList.action === 'Trust') { sessionCfg.client_connections[q.UpdateClientList.hostname].trusted = true; for (const so of sockets) so.write(ev('Session', sessionCfg)); }
-          res.end(); return;
-        }
-        res.writeHead(404); res.end();
-      });
-    });
-    srv.on('upgrade', (req, socket) => {
-      if (req.headers['x-alvr'] !== 'true') { socket.destroy(); return; }
-      const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-      sockets.push(socket);
-      socket.on('error', () => {});
-      socket.write(ev('Log', { severity: 'Info', content: 'x'.repeat(400) }));
-    });
-    await new Promise(r => srv.listen(8082, '127.0.0.1', r));
-    const statsTimer = setInterval(() => { for (const so of sockets) so.write(ev('StatisticsSummary', { total_latency_ms: 38.4, network_latency_ms: 4.1, client_fps: 90, video_mbits_per_sec: 412.6, packets_lost_per_sec: 0, battery_hmd: 76, hmd_plugged: true })); }, 500);
-    try {
-      openInternal(w, 'cloud-desktop');
-      await wait(5000);
-      const pg = activeTab(w);
-      const live = await cd().liveStatus();
-      S('cloud desktop: live', JSON.stringify({ state: live.state, via: live.via, server: live.server, stats: live.stats, headsets: live.headsets.map(x => [x.name, x.state, x.trusted]) }));
-      S('cloud desktop: page', tabUrl(pg), '|', JSON.stringify((await pg.view.webContents.executeJavaScript('document.querySelector("main").innerText').catch(e => e.message)).slice(0, 700)));
-      await screen('cloud-desktop-streaming');
-      // Trust the new Wi-Fi headset from the page.
-      const trusted = await pg.view.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('.hs button')].find(x => x.textContent === 'Trust'); if (b) b.click(); return !!b; })()`).catch(e => e.message);
-      await wait(2500);
-      S('cloud desktop: trust clicked', trusted, '| requests', JSON.stringify(got.filter(x => x !== '"GetSession"')), '| now', JSON.stringify((await cd().liveStatus()).headsets.map(x => [x.name, x.trusted])));
-
-      // The streamer asks for a SteamVR restart (first connection of a headset): CloudBrowser does it.
-      const realRestart = cd().restartSteamvr;
-      let restartAsked = 0;
-      cd().restartSteamvr = async () => { restartAsked++; };
-      for (const so of sockets) so.write(ev('ServerRequestsSelfRestart'));
-      await wait(1500);
-      cd().restartSteamvr = realRestart;
-      S('cloud desktop: restart request handled', restartAsked);
-
-      // Double-press ☰ on the left controller toggles desktop mode (single presses and other buttons don't).
-      const realToggle = cd().toggleDesktopMode;
-      let toggles = 0;
-      cd().toggleDesktopMode = async () => { toggles++; };
-      const btn = (p, v) => ev('Buttons', [{ path: p, value: { Binary: v } }]);
-      const L = '/user/hand/left/input/menu/click', A = '/user/hand/right/input/a/click';
-      for (const so of sockets) so.write(btn(L, true));
-      await wait(800);
-      for (const so of sockets) { so.write(btn(L, false)); so.write(btn(A, true)); }
-      await wait(800);
-      const singleOnly = toggles;
-      for (const so of sockets) { so.write(btn(L, true)); so.write(btn(L, false)); }
-      await wait(150);
-      for (const so of sockets) so.write(btn(L, true));
-      await wait(800);
-      cd().toggleDesktopMode = realToggle;
-      // In desktop mode: one ☰ press opens the menu, clicking the right thumbstick recenters.
-      const realSend = cd().menuSend, realRecenter = cd().recenter;
-      const sentToMenu = [];
-      let recentered = 0;
-      cd().menuSend = (c) => { sentToMenu.push(c); return true; };
-      cd().recenter = () => { recentered++; return true; };
-      cd()._dm = true;
-      for (const so of sockets) { so.write(btn(L, true)); so.write(btn(L, false)); }
-      await wait(800);
-      for (const so of sockets) so.write(btn('/user/hand/right/input/thumbstick/click', true));
-      await wait(500);
-      cd()._dm = false;
-      cd().menuSend = realSend; cd().recenter = realRecenter;
-      S('cloud desktop: menu single press', JSON.stringify(sentToMenu), '| recentered', recentered);
-      got.length = 0;
-      await cd().setPassthrough(true);
-      await cd().setPassthrough(false);
-      S('cloud desktop: menu double-press', 'after single presses', singleOnly, '| after double press', toggles, '| passthrough sent', JSON.stringify(got).slice(0, 300));
-
-      // Sound: switching the mic and low delay on sends the settings to the streamer.
-      got.length = 0;
-      const aud = await cd().setAudio({ mic: true, lowDelay: true }).catch(e => ({ error: e.message }));
-      S('cloud desktop: audio', JSON.stringify(aud), '| sent', JSON.stringify(got.filter(x => x.includes('SetValues'))).slice(0, 700));
-      await pg.view.webContents.executeJavaScript(`loadAudio(); document.querySelector('.sound').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
-      await wait(1500);
-      const micTest = await pg.view.webContents.executeJavaScript(`(async () => { document.getElementById('testMic').click(); await new Promise(r => setTimeout(r, 2500)); return document.querySelector('.sound').innerText; })()`).catch(e => e.message);
-      S('cloud desktop: sound section', JSON.stringify(String(micTest).slice(0, 900)));
-      await screen('cloud-desktop-sound');
-
-      // Cable checker with no headset plugged in (downloads adb the first time).
-      const cable = await pg.view.webContents.executeJavaScript(`(async () => { document.getElementById('checkCable').click(); for (let i = 0; i < 240 && document.getElementById('cableResult').hidden; i++) await new Promise(r => setTimeout(r, 500)); return document.getElementById('cable').innerText; })()`).catch(e => e.message);
-      S('cloud desktop: cable checker', JSON.stringify(String(cable).slice(0, 500)), '| progress', JSON.stringify(await pg.view.webContents.executeJavaScript(`document.getElementById('progress').textContent`).catch(() => '')));
-      await pg.view.webContents.executeJavaScript(`document.getElementById('cable').scrollIntoView({ block: 'center' }); 1`).catch(() => {});
-      await wait(600);
-      await screen('cloud-desktop-cable');
-      cd().stopWatching();
-      clearInterval(statsTimer);
-      for (const so of sockets) so.destroy();
-      await new Promise(r => srv.close(r));
-      await wait(4500);
-      const off = await cd().liveStatus();
-      S('cloud desktop: after streamer stops', off.state, off.server);
-      await pg.view.webContents.executeJavaScript(`window.scrollTo(0, 0); 1`).catch(() => {});
-      await wait(1500);
-      await screen('cloud-desktop-off');
-      closeTab(pg.id);
-    } finally { clearInterval(statsTimer); try { srv.close(); } catch {} }
-
-    openInternal(w, 'settings', '#vr');
+  await step('chrome look', async () => {
+    openInternal(w, 'newtab');
     await wait(2500);
-    const st = activeTab(w);
-    S('cloud desktop: health', JSON.stringify((await cd().health().catch(e => [{ error: e.message }])).map(x => [x.id, x.ok, x.fix])));
-    S('cloud desktop: settings row', await st.view.webContents.executeJavaScript(`document.getElementById('cdStatus').textContent + ' | ' + document.getElementById('cdOpen').textContent`).catch(e => e.message));
-    closeTab(st.id);
+    await screen('chrome-newtab');
+    const t = createTab(w, 'https://example.com/');
+    await wait(3000);
+    const before = Math.round(Math.pow(1.2, t.view.webContents.getZoomLevel()) * 100);
+    uiSend(w, 'app-menu', appMenuState(w));
+    await wait(800);
+    const shown = await w.ui.webContents.executeJavaScript(`!document.getElementById('app-menu').hidden && document.querySelectorAll('#app-menu .am-item').length`).catch(e => e.message);
+    await screen('chrome-menu');
+    // Zoom + in the menu works and the menu stays open with the new value.
+    await w.ui.webContents.executeJavaScript(`document.querySelector('#app-menu [data-a="zoom-in"]').click(); 1`).catch(() => {});
+    await wait(800);
+    const after = Math.round(Math.pow(1.2, t.view.webContents.getZoomLevel()) * 100);
+    const pct = await w.ui.webContents.executeJavaScript(`document.querySelector('#app-menu .am-pct')?.textContent`).catch(e => e.message);
+    await w.ui.webContents.executeJavaScript(`document.querySelector('#app-menu [data-a="zoom-out"]').click(); 1`).catch(() => {});
+    await wait(500);
+    // Clicking an item runs it and closes the menu.
+    await w.ui.webContents.executeJavaScript(`[...document.querySelectorAll('#app-menu .am-item')].find(b => b.textContent.startsWith('History')).click(); 1`).catch(() => {});
+    await wait(1500);
+    const closed = await w.ui.webContents.executeJavaScript(`document.getElementById('app-menu').hidden`).catch(e => e.message);
+    S('chrome look: menu items', shown, '| zoom', before, '->', after, 'shows', pct, '| History opened', tabUrl(activeTab(w)), '| menu closed', closed);
+    closeTab(activeTab(w).id);
+    closeTab(t.id);
   });
 
   await step('privacy report', async () => {

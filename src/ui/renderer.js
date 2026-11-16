@@ -903,3 +903,120 @@ window.addEventListener('resize', () => {
   if (state) renderTabs();
   closeOverlay();
 });
+
+
+// ---------- Chrome-style three-dot menu ----------
+const AM_ICONS = {
+  'new-tab': '<path d="M4 6.5h16v12H4z"/><path d="M12 9.5v6M9 12.5h6"/>',
+  'new-window': '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9h17"/>',
+  'new-incognito': '<path d="M3 10h18M6 10l2-5h8l2 5"/><circle cx="7.5" cy="15" r="3"/><circle cx="16.5" cy="15" r="3"/><path d="M10.5 15h3"/>',
+  history: '<path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/><path d="M12 8v4l3 2"/>',
+  downloads: '<path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/>',
+  bookmarks: '<path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/>',
+  extensions: '<path d="M9 4h4v2.5a1.5 1.5 0 0 0 3 0V4a2 2 0 0 1 2 2v3h-2.5a1.5 1.5 0 0 0 0 3H18v6a2 2 0 0 1-2 2h-3v-2.5a1.5 1.5 0 0 0-3 0V20H6a2 2 0 0 1-2-2v-4h2.5a1.5 1.5 0 0 0 0-3H4V6a2 2 0 0 1 2-2z"/>',
+  passwords: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/>',
+  privacy: '<path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/>',
+  print: '<path d="M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><path d="M7 14h10v6H7z"/>',
+  find: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  translate: '<path d="M4 5h9M8.5 3v2M6 5c.6 3.2 2.6 6 5.5 7.5M11 5c-.8 3.6-3.3 6.6-7 8"/><path d="M12.5 21l4-9 4 9M14 17.5h5"/>',
+  reader: '<path d="M4 5.5h6a2 2 0 0 1 2 2V19a1.5 1.5 0 0 0-1.5-1.5H4zM20 5.5h-6a2 2 0 0 0-2 2V19a1.5 1.5 0 0 1 1.5-1.5H20z"/>',
+  screenshot: '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><circle cx="12" cy="12" r="3"/>',
+  pip: '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1"/>',
+  'pop-out': '<path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  'save-page': '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2"/><circle cx="12" cy="12" r="6.6"/>',
+  about: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.5"/>',
+  exit: '<path d="M10 4H5v16h5M15 8l4 4-4 4M19 12H9"/>',
+};
+const amIcon = id => `<svg viewBox="0 0 24 24">${AM_ICONS[id] || ''}</svg>`;
+let amState = null;
+
+function amItem(id, label, key, opts = {}) {
+  const b = document.createElement('button');
+  b.className = 'am-item';
+  b.setAttribute('role', 'menuitem');
+  b.disabled = opts.disabled === true;
+  b.innerHTML = (opts.check !== undefined ? `<span class="am-check">${opts.check ? '✓' : ''}</span>` : amIcon(id)) +
+    `<span class="am-label"></span>${key ? `<span class="am-key">${key}</span>` : ''}`;
+  b.querySelector('.am-label').textContent = label;
+  b.onclick = () => { closeAppMenu(); cloud.menuAction(id); };
+  return b;
+}
+const amSep = () => Object.assign(document.createElement('div'), { className: 'am-sep' });
+
+function amZoomRow(st) {
+  const row = document.createElement('div');
+  row.className = 'am-zoom';
+  row.innerHTML = '<span class="am-label">Zoom</span>' +
+    '<button data-a="zoom-out" title="Zoom out (Ctrl+-)"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>' +
+    `<span class="am-pct">${st.zoom}%</span>` +
+    '<button data-a="zoom-in" title="Zoom in (Ctrl+=)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>' +
+    '<button data-a="fullscreen" title="Full screen (F11)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>';
+  row.querySelector('.am-pct').ondblclick = () => cloud.menuAction('zoom-reset');
+  for (const b of row.querySelectorAll('button')) {
+    b.disabled = !st.hasPage && b.dataset.a !== 'fullscreen';
+    b.onclick = () => { if (b.dataset.a === 'fullscreen') closeAppMenu(); cloud.menuAction(b.dataset.a); };
+  }
+  return row;
+}
+
+function buildAppMenu(st) {
+  const m = $('app-menu');
+  m.replaceChildren(
+    amItem('new-tab', 'New tab', 'Ctrl+T'),
+    amItem('new-window', 'New window', 'Ctrl+N'),
+    amItem('new-incognito', 'New incognito window', 'Ctrl+Shift+N'),
+    amSep(),
+    amItem('passwords', 'Passwords', 'Ctrl+Shift+L'),
+    amItem('history', 'History', 'Ctrl+H'),
+    amItem('downloads', 'Downloads', 'Ctrl+J'),
+    amItem('bookmarks', 'Bookmarks', 'Ctrl+Shift+O'),
+    amItem('extensions', 'Extensions'),
+    amItem('privacy', 'Privacy report'),
+    amSep(),
+    amZoomRow(st),
+    amSep(),
+    amItem('print', 'Print…', 'Ctrl+P', { disabled: !st.hasPage }),
+    amItem('find', 'Find…', 'Ctrl+F'),
+    amItem('translate', 'Translate…', '', { disabled: !st.translatable }),
+    amItem('reader', 'Reader mode', 'F9', { disabled: !st.readerable }),
+    amItem('screenshot', 'Take screenshot', 'Ctrl+Shift+S', { disabled: !st.hasPage }),
+    amItem('pip', 'Picture in picture', '', { disabled: !st.hasPage }),
+    amItem('pop-out', 'Pop out tab', '', { disabled: !st.hasPage }),
+    amItem('save-page', 'Save page as…', '', { disabled: !st.hasPage }),
+    amSep(),
+    amItem('bookmarks-bar', 'Show bookmarks bar', 'Ctrl+Shift+B', { check: st.bookmarksBar }),
+    amItem('vertical-tabs', 'Vertical tabs', '', { check: st.vertical }),
+    amSep(),
+    amItem('settings', 'Settings', 'Ctrl+,'),
+    ...(st.notDefault ? [amItem('settings', 'Make CloudBrowser your default browser')] : []),
+    amItem('about', 'About CloudBrowser'),
+    amSep(),
+    amItem('exit', 'Exit'),
+  );
+  if (st.notDefault) m.querySelectorAll('.am-item')[[...m.querySelectorAll('.am-item')].findIndex(b => b.textContent.includes('default'))].onclick = () => { closeAppMenu(); cloud.menuAction('make-default'); };
+}
+
+function openAppMenu(st) {
+  amState = st;
+  buildAppMenu(st);
+  const m = $('app-menu');
+  const r = $('menu').getBoundingClientRect();
+  m.hidden = false;
+  m.style.top = (r.bottom + 4) + 'px';
+  m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)) + 'px';
+  $('menu').classList.add('open');
+  document.body.classList.add('panel');
+  cloud.setOverlay(true);
+}
+function closeAppMenu() {
+  if ($('app-menu').hidden) return;
+  $('app-menu').hidden = true;
+  $('menu').classList.remove('open');
+  document.body.classList.remove('panel');
+  cloud.setOverlay(false);
+}
+cloud.onAppMenu(st => { if ($('app-menu').hidden) openAppMenu(st); else closeAppMenu(); });
+cloud.onAppMenuState(st => { if (!$('app-menu').hidden) { amState = st; buildAppMenu(st); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAppMenu(); });
+$('backdrop').addEventListener('mousedown', closeAppMenu);
